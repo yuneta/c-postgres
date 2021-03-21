@@ -8,10 +8,6 @@ install
 
 sudo apt-get install libpq-dev postgresql-server-dev-all
 
-// Para los ejemplos
-sudo ln -s /usr/include/postgresql/libpq-fe.h /usr/include/
-sudo ln -s /usr/include/postgresql/postgres_ext.h /usr/include/
-
 License
 -------
 
