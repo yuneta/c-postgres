@@ -81,6 +81,8 @@ SDATA (ASN_OCTET_STR,   "disconnected_event_name",      SDF_RD,         "EV_DISC
 SDATA (ASN_OCTET_STR,   "tx_ready_event_name",          SDF_RD,         "EV_TX_READY",  "Must be empty if you don't want receive this event"),
 SDATA (ASN_OCTET_STR,   "rx_data_event_name",           SDF_RD,         "EV_RX_DATA",   "Must be empty if you don't want receive this event"),
 SDATA (ASN_OCTET_STR,   "stopped_event_name",           SDF_RD,         "EV_STOPPED",   "Stopped event name"),
+
+SDATA (ASN_JSON,        "schema",                       SDF_RD,         0,              "Database schema"),
 SDATA (ASN_JSON,        "urls",                         SDF_RD,         0,
     "list of destination urls: [rUrl^lUrl, ...]"),
 SDATA (ASN_POINTER,     "user_data",        0,                          0,              "user data"),
@@ -598,8 +600,10 @@ PRIVATE int ac_add_record(hgobj gobj, const char *event, json_t *kw, hgobj src)
 {
     PRIVATE_DATA *priv = gobj_priv_data(gobj);
 
-    if (priv->timeout_inactivity > 0)
+    if (priv->timeout_inactivity > 0) {
         set_timeout(priv->timer, priv->timeout_inactivity);
+    }
+
     // TODO gobj_send_event(gobj_bottom_gobj(gobj), "EV_ADD_RECORD", kw, gobj); // own kw
     return 0;
 }
