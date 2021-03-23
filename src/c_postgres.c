@@ -25,7 +25,7 @@
  *              Prototypes
  ***************************************************************************/
 PRIVATE void on_poll_cb(uv_poll_t *req, int status, int events);
-
+PRIVATE void on_close_cb(uv_handle_t* handle);
 
 /***************************************************************************
  *          Data: config, public data, private data
@@ -71,11 +71,6 @@ SDATA (ASN_INTEGER,     "timeout_between_connections",  SDF_RD,         5*1000, 
 SDATA (ASN_INTEGER,     "timeout_inactivity",           SDF_RD,         -1,
             "Inactivity timeout to close the connection."
             "Reconnect when new data arrived. With -1 never close."),
-SDATA (ASN_OCTET_STR,   "connected_event_name",         SDF_RD,         "EV_CONNECTED", "Must be empty if you don't want receive this event"),
-SDATA (ASN_OCTET_STR,   "disconnected_event_name",      SDF_RD,         "EV_DISCONNECTED", "Must be empty if you don't want receive this event"),
-SDATA (ASN_OCTET_STR,   "tx_ready_event_name",          SDF_RD,         "EV_TX_READY",  "Must be empty if you don't want receive this event"),
-SDATA (ASN_OCTET_STR,   "rx_data_event_name",           SDF_RD,         "EV_RX_DATA",   "Must be empty if you don't want receive this event"),
-SDATA (ASN_OCTET_STR,   "stopped_event_name",           SDF_RD,         "EV_STOPPED",   "Stopped event name"),
 
 SDATA (ASN_POINTER,     "user_data",        0,                          0,              "user data"),
 SDATA (ASN_POINTER,     "user_data2",       0,                          0,              "more user data"),
@@ -117,16 +112,9 @@ typedef struct _PRIVATE_DATA {
     int n_urls;
     json_t *urls;
 
-    const char *connected_event_name;
-    const char *tx_ready_event_name;
-    const char *rx_data_event_name;
-    const char *disconnected_event_name;
-    const char *stopped_event_name;
-
     PGconn *conn;
     uv_poll_t uv_poll;
     int pg_socket;
-    BOOL connected;
     BOOL inform_disconnected;
 
     json_t *dl_tx_data;
@@ -165,11 +153,6 @@ PRIVATE void mt_create(hgobj gobj)
      *  HACK The writable attributes must be repeated in mt_writing method.
      */
     SET_PRIV(timeout_inactivity,            gobj_read_int32_attr)
-    SET_PRIV(connected_event_name,          gobj_read_str_attr)
-    SET_PRIV(tx_ready_event_name,           gobj_read_str_attr)
-    SET_PRIV(rx_data_event_name,            gobj_read_str_attr)
-    SET_PRIV(disconnected_event_name,       gobj_read_str_attr)
-    SET_PRIV(stopped_event_name,            gobj_read_str_attr)
     SET_PRIV(urls,                          gobj_read_json_attr)
     if(!json_is_array(priv->urls)) {
         log_error(0,
@@ -237,6 +220,8 @@ PRIVATE int mt_start(hgobj gobj)
     if(!gobj_read_bool_attr(gobj, "manual")) {
         set_timeout(priv->timer, 100);
     }
+    priv->pg_socket = -1;
+
     return 0;
 }
 
@@ -248,9 +233,13 @@ PRIVATE int mt_stop(hgobj gobj)
     PRIVATE_DATA *priv = gobj_priv_data(gobj);
 
     if(priv->conn) {
-        uv_poll_start(&priv->uv_poll, UV_DISCONNECT, on_poll_cb);
         PQfinish(priv->conn);
         priv->conn = 0;
+        if(priv->pg_socket != -1) {
+            uv_poll_stop(&priv->uv_poll);
+            uv_close((uv_handle_t*)&priv->uv_poll, on_close_cb);
+            priv->pg_socket = -1;
+        }
     }
     clear_timeout(priv->timer);
     gobj_stop(priv->timer);
@@ -307,9 +296,6 @@ PRIVATE json_t *cmd_authzs(hgobj gobj, const char *cmd, json_t *kw, hgobj src)
  ***************************************************************************/
 PRIVATE void set_connected(hgobj gobj)
 {
-    PRIVATE_DATA *priv = gobj_priv_data(gobj);
-
-    priv->connected = 1;
     gobj_send_event(gobj, "EV_CONNECTED", 0, gobj);
 }
 
@@ -328,8 +314,7 @@ PRIVATE void on_close_cb(uv_handle_t* handle)
         PQfinish(priv->conn);
         priv->conn = 0;
     }
-    priv->connected = 0;
-    gobj_send_event(gobj, "EV_DISCONNECTED", 0, gobj);
+    gobj_send_event(gobj, "EV_STOPPED", 0, gobj);
 }
 
 /***************************************************************************
@@ -339,10 +324,19 @@ PRIVATE void set_disconnected(hgobj gobj)
 {
     PRIVATE_DATA *priv = gobj_priv_data(gobj);
 
-    uv_poll_stop(&priv->uv_poll);
-    uv_close((uv_handle_t*)&priv->uv_poll, on_close_cb);
+    if(priv->conn) {
+        PQfinish(priv->conn);
+        priv->conn = 0;
+    }
+    if(priv->pg_socket != -1) {
+        uv_poll_stop(&priv->uv_poll);
+        uv_close((uv_handle_t*)&priv->uv_poll, on_close_cb);
+        priv->pg_socket = -1;
+    }
+
     set_timeout(priv->timer, 5*1000);
     gobj_change_state(gobj, "ST_WAIT_DISCONNECTED");
+    gobj_send_event(gobj, "EV_DISCONNECTED", 0, gobj);
 }
 
 /***************************************************************************
@@ -383,10 +377,6 @@ PRIVATE void on_poll_cb(uv_poll_t *req, int status, int events)
                     "error",        "%s", PQerrorMessage(priv->conn),
                     NULL
                 );
-                set_disconnected(gobj);
-                return;
-            }
-            if(events & UV_DISCONNECT) {
                 set_disconnected(gobj);
                 return;
             }
@@ -607,9 +597,7 @@ PRIVATE int ac_disconnected(hgobj gobj, const char *event, json_t *kw, hgobj src
     }
 
     if(priv->inform_disconnected) {
-        if(!empty_string(priv->disconnected_event_name)) {
-            gobj_publish_event(gobj, priv->disconnected_event_name, 0);
-        }
+        gobj_publish_event(gobj, "EV_ON_OPEN", 0);
     }
     priv->inform_disconnected = FALSE;
 
@@ -656,24 +644,9 @@ PRIVATE int ac_connected(hgobj gobj, const char *event, json_t *kw, hgobj src)
     }
 
     priv->inform_disconnected = TRUE;
-    if (!empty_string(priv->connected_event_name)) {
-        gobj_publish_event(gobj, priv->connected_event_name, 0);
-    }
+    gobj_publish_event(gobj, "EV_ON_CLOSE", 0);
 
     KW_DECREF(kw);
-    return 0;
-}
-
-/***************************************************************************
- *
- ***************************************************************************/
-PRIVATE int ac_rx_data(hgobj gobj, const char *event, json_t *kw, hgobj src)
-{
-    PRIVATE_DATA *priv = gobj_priv_data(gobj);
-
-    if (priv->timeout_inactivity > 0)
-        set_timeout(priv->timer, priv->timeout_inactivity);
-    gobj_publish_event(gobj, priv->rx_data_event_name, kw); // use the same kw
     return 0;
 }
 
@@ -710,7 +683,7 @@ PRIVATE int ac_send_data(hgobj gobj, const char *event, json_t *kw, hgobj src)
         set_disconnected(gobj);
     }
 
-    // TODO gobj_send_event(gobj_bottom_gobj(gobj), "EV_TX_DATA", kw, gobj); // own kw
+    // TODO gobj_send_event(gobj, "EV_TX_DATA", kw, gobj); // own kw
     return 0;
 }
 
@@ -732,34 +705,13 @@ PRIVATE int ac_enqueue_data(hgobj gobj, const char *event, json_t *kw, hgobj src
 /***************************************************************************
  *
  ***************************************************************************/
-PRIVATE int ac_transmit_ready(hgobj gobj, const char *event, json_t *kw, hgobj src)
-{
-    PRIVATE_DATA *priv = gobj_priv_data(gobj);
-
-    if (!empty_string(priv->tx_ready_event_name)) {
-        const char *event_name = priv->tx_ready_event_name;
-        json_t *kw_ex = json_pack("{s:I}",
-            "connex", (json_int_t)(size_t)gobj
-        );
-        gobj_publish_event(gobj, event_name, kw_ex);
-    }
-    KW_DECREF(kw);
-    return 0;
-}
-
-/***************************************************************************
- *
- ***************************************************************************/
 PRIVATE int ac_drop(hgobj gobj, const char *event, json_t *kw, hgobj src)
 {
     PRIVATE_DATA *priv = gobj_priv_data(gobj);
 
-    if(priv->conn) {
-        PQfinish(priv->conn);
-        priv->conn = 0;
-    }
+    set_disconnected(gobj);
 
-    if(gobj_is_running(gobj_bottom_gobj(gobj))) {
+    if(gobj_is_running(gobj)) {
         set_timeout(
             priv->timer,
             gobj_read_int32_attr(gobj, "timeout_between_connections")
@@ -775,21 +727,6 @@ PRIVATE int ac_drop(hgobj gobj, const char *event, json_t *kw, hgobj src)
  ***************************************************************************/
 PRIVATE int ac_stopped(hgobj gobj, const char *event, json_t *kw, hgobj src)
 {
-//     PRIVATE_DATA *priv = gobj_priv_data(gobj);
-
-// TODO    if(gobj_bottom_gobj(gobj)==src) {
-//         if(gobj_is_running(gobj)) {
-//             if (priv->n_urls > 0 && priv->idx_dst > 0) {
-//                 set_timeout(priv->timer, 100);
-//             } else {
-//                 set_timeout(
-//                     priv->timer,
-//                     gobj_read_int32_attr(gobj, "timeout_between_connections")
-//                 );
-//             }
-//         }
-//     }
-
     KW_DECREF(kw);
     return 0;
 }
@@ -806,8 +743,6 @@ PRIVATE const EVENT input_events[] = {
     // bottom input
     {"EV_CONNECTED",        0,  0,  ""},
     {"EV_DISCONNECTED",     0,  0,  ""},
-    {"EV_RX_DATA",          0,  0,  ""},
-    {"EV_TX_READY",         0,  0,  ""},
 
     {"EV_TIMEOUT",          0,  0,  ""},
     {"EV_STOPPED",          0,  0,  ""},
@@ -843,11 +778,9 @@ PRIVATE EV_ACTION ST_WAIT_CONNECTED[] = {
     {0,0,0}
 };
 PRIVATE EV_ACTION ST_CONNECTED[] = {
-    {"EV_RX_DATA",          ac_rx_data,                 0},
     {"EV_TX_DATA",          ac_send_data,               0},
     {"EV_DISCONNECTED",     ac_disconnected,            "ST_DISCONNECTED"},
     {"EV_TIMEOUT",          ac_timeout_data,            0},
-    {"EV_TX_READY",         ac_transmit_ready,          0},
     {"EV_DROP",             ac_drop,                    "ST_WAIT_DISCONNECTED"},
     {"EV_STOPPED",          ac_stopped,                 0},
     {0,0,0}
