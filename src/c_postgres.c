@@ -26,6 +26,8 @@
  ***************************************************************************/
 PRIVATE void on_poll_cb(uv_poll_t *req, int status, int events);
 PRIVATE void on_close_cb(uv_handle_t* handle);
+PRIVATE int process_result(hgobj gobj, PGresult* result);
+PRIVATE int pull_queue(hgobj gobj);
 
 /***************************************************************************
  *          Data: config, public data, private data
@@ -117,7 +119,8 @@ typedef struct _PRIVATE_DATA {
     int pg_socket;
     BOOL inform_disconnected;
 
-    json_t *dl_tx_data;
+    json_t *dl_queries;
+    json_t *cur_query;
 } PRIVATE_DATA;
 
 
@@ -138,7 +141,7 @@ PRIVATE void mt_create(hgobj gobj)
     PRIVATE_DATA *priv = gobj_priv_data(gobj);
 
     priv->timer = gobj_create(gobj_name(gobj), GCLASS_TIMER, 0, gobj);
-    priv->dl_tx_data = json_array();
+    priv->dl_queries = json_array();
 
     /*
      *  SERVICE subscription model
@@ -195,7 +198,7 @@ PRIVATE void mt_destroy(hgobj gobj)
 {
     PRIVATE_DATA *priv = gobj_priv_data(gobj);
 
-    if(json_array_size(priv->dl_tx_data)) {
+    if(json_array_size(priv->dl_queries)) {
         log_error(0,
             "gobj",         "%s", gobj_full_name(gobj),
             "function",     "%s", __FUNCTION__,
@@ -203,9 +206,9 @@ PRIVATE void mt_destroy(hgobj gobj)
             "msg",          "%s", "records LOST",
             NULL
         );
-        log_debug_json(0, priv->dl_tx_data, "records LOST");
+        log_debug_json(0, priv->dl_queries, "records LOST");
     }
-    JSON_DECREF(priv->dl_tx_data);
+    JSON_DECREF(priv->dl_queries);
 }
 
 /***************************************************************************
@@ -294,6 +297,46 @@ PRIVATE json_t *cmd_authzs(hgobj gobj, const char *cmd, json_t *kw, hgobj src)
 /***************************************************************************
  *
  ***************************************************************************/
+PRIVATE void noticeProcessor(void *arg, const char *message)
+{
+    hgobj gobj = arg;
+
+    log_error(0,
+        "gobj",         "%s", gobj_full_name(gobj),
+        "function",     "%s", __FUNCTION__,
+        "msgset",       "%s", MSGSET_DATABASE_ERROR,
+        "msg",          "%s", message,
+        NULL
+    );
+}
+
+/***************************************************************************
+ *  Return the destination url to connect from
+ *  the ``urls`` attribute.
+ *  If there are multiple urls try to connect to each cyclically.
+ ***************************************************************************/
+PRIVATE BOOL get_next_dst(
+    hgobj gobj,
+    char *url, int url_len
+)
+{
+    PRIVATE_DATA *priv = gobj_priv_data(gobj);
+    if(priv->n_urls) {
+        const char *url_ = json_list_str(priv->urls, priv->idx_dst);
+        snprintf(url, url_len, "%s", url_);
+
+        // Point to next dst
+        ++priv->idx_dst;
+        priv->idx_dst = priv->idx_dst % priv->n_urls;
+        return TRUE;
+    }
+
+    return FALSE;
+}
+
+/***************************************************************************
+ *
+ ***************************************************************************/
 PRIVATE void set_connected(hgobj gobj)
 {
     gobj_send_event(gobj, "EV_CONNECTED", 0, gobj);
@@ -346,10 +389,11 @@ PRIVATE void on_poll_cb(uv_poll_t *req, int status, int events)
 {
     hgobj gobj = req->data;
     PRIVATE_DATA *priv = gobj_priv_data(gobj);
-    PGresult* result;
 
     if(gobj_trace_level(gobj) & TRACE_UV) {
-        log_debug_printf(0, "<<<< on_poll_cb status %d, events %d", status, events);
+        log_debug_printf(0, "<<<< on_poll_cb status %d, events %d, fd %d",
+            status, events, priv->pg_socket
+        );
     }
 
     if(status < 0) {
@@ -383,28 +427,33 @@ PRIVATE void on_poll_cb(uv_poll_t *req, int status, int events)
             if(events & UV_READABLE) {
                 if(PQconsumeInput(priv->conn)) {
                     while (!PQisBusy(priv->conn)) {
-                        result = PQgetResult(priv->conn);
+                        PGresult* result = PQgetResult(priv->conn);
                         if(!result) {
+                            pull_queue(gobj);
                             break;
                         }
-
-        //                 rh = conn->rh_head;
-        //                 if (!result) {
-        //                     /* It's over. Move onto the next request */
-        //                     unqueue_query(conn, rh);
-        //                     break;
-        //                 }
-        //                 if (rh && !rh->drop) {
-        //                     /* NOTE: control is moved to the handler */
-        //                     as_channel_send(rh->chan, result);
-        //                 }
-
+                        process_result(gobj, result);
                         PQclear(result);
                     }
-                }
-                int ret = PQflush(priv->conn);
-                if(ret < 0) {
+
+                    /*
+                     *  After read try to write
+                     */
+                    int ret = PQflush(priv->conn);
+                    if(ret < 0) {
+                        set_disconnected(gobj);
+                    }
+                } else {
+                    log_error(0,
+                        "gobj",         "%s", gobj_full_name(gobj),
+                        "function",     "%s", __FUNCTION__,
+                        "msgset",       "%s", MSGSET_DATABASE_ERROR,
+                        "msg",          "%s", "PQconsumeInput failed",
+                        "error",        "%s", PQerrorMessage(priv->conn),
+                        NULL
+                    );
                     set_disconnected(gobj);
+                    return;
                 }
             }
 
@@ -413,7 +462,10 @@ PRIVATE void on_poll_cb(uv_poll_t *req, int status, int events)
                 if(ret < 0) {
                     set_disconnected(gobj);
                 } else if(ret == 0) {
+                    // No more data to send, put off UV_WRITABLE
                     uv_poll_start(&priv->uv_poll, UV_READABLE, on_poll_cb);
+                } else {
+                    // == 1 more data to send, continue with UV_WRITABLE
                 }
             }
 
@@ -426,8 +478,8 @@ PRIVATE void on_poll_cb(uv_poll_t *req, int status, int events)
             }
             switch (st) {
             case PGRES_POLLING_OK:
-                set_connected(gobj);
                 uv_poll_start(&priv->uv_poll, UV_READABLE|UV_WRITABLE, on_poll_cb);
+                set_connected(gobj);
                 return;
 
             case PGRES_POLLING_READING:
@@ -472,27 +524,205 @@ PRIVATE void on_poll_cb(uv_poll_t *req, int status, int events)
 }
 
 /***************************************************************************
- *  Return the destination url to connect from
- *  the ``urls`` attribute.
- *  If there are multiple urls try to connect to each cyclically.
+ *
  ***************************************************************************/
-PRIVATE BOOL get_next_dst(
+PRIVATE int push_queue(
     hgobj gobj,
-    char *url, int url_len
+    json_t *kw // not owned
 )
 {
     PRIVATE_DATA *priv = gobj_priv_data(gobj);
-    if(priv->n_urls) {
-        const char *url_ = json_list_str(priv->urls, priv->idx_dst);
-        snprintf(url, url_len, "%s", url_);
 
-        // Point to next dst
-        ++priv->idx_dst;
-        priv->idx_dst = priv->idx_dst % priv->n_urls;
-        return TRUE;
+    const char *query = kw_get_str(kw, "query", "", KW_REQUIRED);
+    if(empty_string(query)) {
+        log_error(0,
+            "gobj",         "%s", gobj_full_name(gobj),
+            "function",     "%s", __FUNCTION__,
+            "msgset",       "%s", MSGSET_PARAMETER_ERROR,
+            "msg",          "%s", "query EMPTY",
+            NULL
+        );
+    } else {
+        json_array_append(priv->dl_queries, kw);
     }
 
-    return FALSE;
+    return 0;
+}
+
+/***************************************************************************
+ *
+ ***************************************************************************/
+PRIVATE int pull_queue(hgobj gobj)
+{
+    PRIVATE_DATA *priv = gobj_priv_data(gobj);
+
+    if(PQflush(priv->conn)<0) {
+        set_disconnected(gobj);
+        return -1;
+    }
+
+    if(priv->cur_query) {
+        // query in progress
+        return 0;
+    }
+
+    /*
+     *  process enqueued data
+     */
+    if(json_array_size(priv->dl_queries)>0) {
+        priv->cur_query = json_incref(json_array_get(priv->dl_queries, 0));
+        json_array_remove(priv->dl_queries, 0);
+        const char *query = kw_get_str(priv->cur_query, "query", "", KW_REQUIRED);
+        if(gobj_trace_level(gobj) & TRACE_MESSAGES) {
+            trace_msg("Postgres QUERY ==>\n%s\n", query);
+        }
+        PQsendQuery(priv->conn, query);
+        uv_poll_start(&priv->uv_poll, UV_READABLE|UV_WRITABLE, on_poll_cb);
+    }
+
+    return 0;
+}
+
+/***************************************************************************
+ *
+
+DEBUG: 2021-03-25T18:14:07.407600735+0100 - ========================> field rowid, Oid 23
+DEBUG: 2021-03-25T18:14:07.407617695+0100 - ========================> field id, Oid 1043
+DEBUG: 2021-03-25T18:14:07.407625417+0100 - ========================> field name, Oid 1043
+DEBUG: 2021-03-25T18:14:07.407632070+0100 - ========================> field event, Oid 1043
+DEBUG: 2021-03-25T18:14:07.407638786+0100 - ========================> field tm, Oid 1114
+DEBUG: 2021-03-25T18:14:07.407645374+0100 - ========================> field priority, Oid 23
+DEBUG: 2021-03-25T18:14:07.407652369+0100 - ========================> field gps_fixed, Oid 16
+DEBUG: 2021-03-25T18:14:07.407659127+0100 - ========================> field accuracy, Oid 23
+DEBUG: 2021-03-25T18:14:07.407665820+0100 - ========================> field speed, Oid 23
+DEBUG: 2021-03-25T18:14:07.407672895+0100 - ========================> field battery, Oid 23
+DEBUG: 2021-03-25T18:14:07.407679308+0100 - ========================> field altitude, Oid 23
+DEBUG: 2021-03-25T18:14:07.407686112+0100 - ========================> field heading, Oid 23
+DEBUG: 2021-03-25T18:14:07.407692778+0100 - ========================> field longitude, Oid 700
+DEBUG: 2021-03-25T18:14:07.407699390+0100 - ========================> field latitude, Oid 700
+
+#define VARCHAROID 1043     varchar
+#define INT4OID     23      integer
+#define TIMESTAMPOID 1114   timestamp           my time
+#define BOOLOID 16          boolean             my boolean
+#define FLOAT4OID 700       real                my real
+#define FLOAT8OID 701       double precision    my double
+#define INT8OID 20          bigint              (8 bytes, json_int_t) my integer, o mejor numeric?
+#define TEXTOID 25          text                (my string)
+#define NUMERICOID 1700     numeric             (my integer)? NaN and infinity values are disallowed
+                                                up to 131072 digits before the decimal point;
+                                                up to 16383 digits after the decimal point
+#define JSONOID 114         json
+
+                            text                my json, object/dict, list/array
+
+
+string      =>  text
+integer     =>  bigint
+real        =>  real
+double      =>  double precision
+null        =>  null?
+time        =>  timestamp
+boolean     =>  boolean
+json        =>  text
+blob        =>  text
+object ...  =>  text
+
+
+
+ ***************************************************************************/
+PRIVATE int process_result(hgobj gobj, PGresult* result)
+{
+    PRIVATE_DATA *priv = gobj_priv_data(gobj);
+
+    if(!priv->cur_query) {
+        log_error(0,
+            "gobj",         "%s", gobj_full_name(gobj),
+            "function",     "%s", __FUNCTION__,
+            "msgset",       "%s", MSGSET_INTERNAL_ERROR,
+            "msg",          "%s", "No query for result",
+            NULL
+        );
+        return 0;
+    }
+
+    json_t *kw_result = priv->cur_query;
+    priv->cur_query = 0;
+
+
+    ExecStatusType st = PQresultStatus(result);
+    BOOL with_binaries = PQbinaryTuples(result);
+    trace_msg("with_binaries =========> %d", with_binaries);
+
+    switch(st) {
+        case PGRES_TUPLES_OK:
+        case PGRES_SINGLE_TUPLE:
+            json_object_set_new(kw_result, "result", json_integer(0));
+            int rows = PQntuples(result);
+            int cols = PQnfields(result);
+            json_object_set_new(kw_result, "rows", json_integer(rows));
+            json_object_set_new(kw_result, "cols", json_integer(cols));
+            json_t *jn_data = json_array();
+            json_object_set_new(kw_result, "data", jn_data);
+            for(int r=0; r<rows; r++) {
+                json_t *row = json_object();
+                json_array_append_new(jn_data, row);
+                for(int c=0; c<cols; c++) {
+                    char *col_name = PQfname(result, c);
+                    int format = PQfformat(result, c);
+
+                    char *v = PQgetvalue(result, r, c);
+                    if(empty_string(v)) {
+                        if(PQgetisnull(result, r, c)) {
+                            v = 0;
+                        }
+                    }
+                    if(!v) {
+                        json_object_set_new(row, col_name, json_null());
+                    } else {
+                        Oid oid = PQftype(result, c);
+                        trace_msg("========================> field %s, Oid %d", col_name, oid);
+
+                        json_object_set_new(row, col_name, json_string(v));
+                    }
+                }
+            }
+            break;
+
+        case PGRES_COMMAND_OK:
+            json_object_set_new(kw_result, "result", json_integer(0));
+            json_object_set_new(kw_result, "status", json_string(PQcmdStatus(result)));
+            json_object_set_new(kw_result, "rows", json_integer(atoi(PQcmdTuples(result))));
+            break;
+
+        case PGRES_BAD_RESPONSE: /* an unexpected response was recv'd from the backend */
+        case PGRES_NONFATAL_ERROR: /* notice or warning message */
+        case PGRES_FATAL_ERROR: /* query failed */
+            json_object_set_new(kw_result, "result", json_integer(-1));
+            json_object_set_new(kw_result, "error", json_string(PQresultErrorMessage(result)));
+            break;
+
+        default:
+            json_object_set_new(kw_result, "result", json_integer(-1));
+            log_error(0,
+                "gobj",         "%s", gobj_full_name(gobj),
+                "function",     "%s", __FUNCTION__,
+                "msgset",       "%s", MSGSET_INTERNAL_ERROR,
+                "msg",          "%s", "No result status supported",
+                "st",           "%d", st,
+                "status",       "%s", PQresStatus(st),
+                NULL
+            );
+            break;
+    }
+
+    if(gobj_trace_level(gobj) & TRACE_MESSAGES) {
+        log_debug_json(0, kw_result, "<== Postgres RESULT");
+    }
+
+    gobj_publish_event(gobj, "EV_ON_RESULT", kw_result);
+
+    return 0;
 }
 
 
@@ -553,6 +783,8 @@ PRIVATE int ac_connect(hgobj gobj, const char *event, json_t *kw, hgobj src)
     uv_poll_init(yuno_uv_event_loop(), &priv->uv_poll, priv->pg_socket);
     priv->uv_poll.data = gobj;
 
+    PQsetNoticeProcessor(priv->conn, noticeProcessor, gobj);
+
     uv_poll_start(&priv->uv_poll, UV_WRITABLE, on_poll_cb);
 
     set_timeout(priv->timer, gobj_read_int32_attr(gobj, "timeout_waiting_connected"));
@@ -597,7 +829,7 @@ PRIVATE int ac_disconnected(hgobj gobj, const char *event, json_t *kw, hgobj src
     }
 
     if(priv->inform_disconnected) {
-        gobj_publish_event(gobj, "EV_ON_OPEN", 0);
+        gobj_publish_event(gobj, "EV_ON_CLOSE", 0);
     }
     priv->inform_disconnected = FALSE;
 
@@ -633,18 +865,10 @@ PRIVATE int ac_connected(hgobj gobj, const char *event, json_t *kw, hgobj src)
         set_timeout(priv->timer, priv->timeout_inactivity);
     }
 
-    /*
-     *  process enqueued data
-     */
-    if(json_array_size(priv->dl_tx_data)>0) {
-        int idx; json_t *jn_msg;
-        json_array_foreach(priv->dl_tx_data, idx, jn_msg) {
-            gobj_send_event(gobj, "EV_TX_DATA", json_incref(jn_msg), gobj);
-        }
-    }
-
     priv->inform_disconnected = TRUE;
-    gobj_publish_event(gobj, "EV_ON_CLOSE", 0);
+    gobj_publish_event(gobj, "EV_ON_OPEN", 0);
+
+    pull_queue(gobj);
 
     KW_DECREF(kw);
     return 0;
@@ -661,14 +885,11 @@ PRIVATE int ac_timeout_data(hgobj gobj, const char *event, json_t *kw, hgobj src
 }
 
 /***************************************************************************
- *
     {
-        "topic": "tracks_geodb2",
-        "rowid": (json_int_t)md_record.__rowid__,
-        "record": msg
+        "query": "..."
     }
  ***************************************************************************/
-PRIVATE int ac_send_data(hgobj gobj, const char *event, json_t *kw, hgobj src)
+PRIVATE int ac_send_query(hgobj gobj, const char *event, json_t *kw, hgobj src)
 {
     PRIVATE_DATA *priv = gobj_priv_data(gobj);
 
@@ -676,25 +897,20 @@ PRIVATE int ac_send_data(hgobj gobj, const char *event, json_t *kw, hgobj src)
         set_timeout(priv->timer, priv->timeout_inactivity);
     }
 
-    // TODO send data
-    uv_poll_start(&priv->uv_poll, UV_READABLE|UV_WRITABLE, on_poll_cb);
+    push_queue(gobj, kw);
+    pull_queue(gobj);
 
-    if(PQflush(priv->conn)<0) {
-        set_disconnected(gobj);
-    }
-
-    // TODO gobj_send_event(gobj, "EV_TX_DATA", kw, gobj); // own kw
+    KW_DECREF(kw);
     return 0;
 }
 
 /***************************************************************************
  *
  ***************************************************************************/
-PRIVATE int ac_enqueue_data(hgobj gobj, const char *event, json_t *kw, hgobj src)
+PRIVATE int ac_enqueue_query(hgobj gobj, const char *event, json_t *kw, hgobj src)
 {
-    PRIVATE_DATA *priv = gobj_priv_data(gobj);
+    push_queue(gobj, kw);
 
-    json_array_append(priv->dl_tx_data, kw);
     if(gobj_in_this_state(gobj, "ST_DISCONNECTED")) {
         gobj_send_event(gobj, "EV_CONNECT", 0, gobj);
     }
@@ -736,7 +952,7 @@ PRIVATE int ac_stopped(hgobj gobj, const char *event, json_t *kw, hgobj src)
  ***************************************************************************/
 PRIVATE const EVENT input_events[] = {
     // top input
-    {"EV_TX_DATA",       0,  0,  ""},
+    {"EV_SEND_QUERY",     EVF_PUBLIC_EVENT,  0,  ""},
     {"EV_CONNECT",          0,  0,  ""},
     {"EV_DROP",             0,  0,  ""},
 
@@ -750,7 +966,9 @@ PRIVATE const EVENT input_events[] = {
     {NULL, 0, 0, ""}
 };
 PRIVATE const EVENT output_events[] = {
-    {"EV_CONNECTED",        0,  0,  ""},
+    {"EV_ON_OPEN",          EVF_PUBLIC_EVENT,   0,  0},
+    {"EV_ON_CLOSE",         EVF_PUBLIC_EVENT,   0,  0},
+    {"EV_ON_RESULT",        EVF_PUBLIC_EVENT,   0,  0},
     {NULL, 0, 0, ""}
 };
 PRIVATE const char *state_names[] = {
@@ -763,13 +981,13 @@ PRIVATE const char *state_names[] = {
 
 PRIVATE EV_ACTION ST_DISCONNECTED[] = {
     {"EV_CONNECT",          ac_connect,                 "ST_WAIT_CONNECTED"},
-    {"EV_TX_DATA",          ac_enqueue_data,            0},
+    {"EV_SEND_QUERY",       ac_enqueue_query,           0},
     {"EV_TIMEOUT",          ac_timeout_disconnected,    0},
     {"EV_STOPPED",          ac_stopped,                 0},
     {0,0,0}
 };
 PRIVATE EV_ACTION ST_WAIT_CONNECTED[] = {
-    {"EV_TX_DATA",          ac_enqueue_data,            0},
+    {"EV_SEND_QUERY",       ac_enqueue_query,           0},
     {"EV_CONNECTED",        ac_connected,               "ST_CONNECTED"},
     {"EV_DISCONNECTED",     ac_disconnected,            "ST_DISCONNECTED"},
     {"EV_STOPPED",          ac_stopped,                 "ST_DISCONNECTED"},
@@ -778,7 +996,7 @@ PRIVATE EV_ACTION ST_WAIT_CONNECTED[] = {
     {0,0,0}
 };
 PRIVATE EV_ACTION ST_CONNECTED[] = {
-    {"EV_TX_DATA",          ac_send_data,               0},
+    {"EV_SEND_QUERY",       ac_send_query,              0},
     {"EV_DISCONNECTED",     ac_disconnected,            "ST_DISCONNECTED"},
     {"EV_TIMEOUT",          ac_timeout_data,            0},
     {"EV_DROP",             ac_drop,                    "ST_WAIT_DISCONNECTED"},
