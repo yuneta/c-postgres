@@ -61,12 +61,10 @@ SDATA_END()
  *      Attributes - order affect to oid's
  *---------------------------------------------*/
 PRIVATE sdata_desc_t tattr_desc[] = {
-/*-ATTR-type------------name----------------flag------------------------default---------description---------- */
+/*-ATTR-type------------name----------------------------flag------------default---------description---------- */
 SDATA (ASN_JSON,        "schema",                       SDF_RD,         0,              "Database schema"),
-SDATA (ASN_JSON,        "urls",                         SDF_RD,         0,
-    "list of destination urls: [url, ...]"),
-
-SDATA (ASN_BOOLEAN,     "connected",                    SDF_RD,         0,              ""),
+SDATA (ASN_OCTET_STR,   "url",                          SDF_PERSIST|SDF_WR,0,           "Url"),
+SDATA (ASN_BOOLEAN,     "opened",                       SDF_RD,         0,              "Channel opened (opened is higher level than connected"),
 SDATA (ASN_BOOLEAN,     "manual",                       SDF_RD,         0,              "Set true if you want connect manually"),
 SDATA (ASN_INTEGER,     "timeout_waiting_connected",    SDF_RD,         10*1000,        ""),
 SDATA (ASN_INTEGER,     "timeout_between_connections",  SDF_RD,         5*1000,         "Idle timeout to wait between attempts of connection"),
@@ -110,10 +108,6 @@ typedef struct _PRIVATE_DATA {
     int32_t timeout_inactivity;
     hgobj timer;
 
-    int idx_dst;
-    int n_urls;
-    json_t *urls;
-
     PGconn *conn;
     uv_poll_t uv_poll;
     int pg_socket;
@@ -156,17 +150,6 @@ PRIVATE void mt_create(hgobj gobj)
      *  HACK The writable attributes must be repeated in mt_writing method.
      */
     SET_PRIV(timeout_inactivity,            gobj_read_int32_attr)
-    SET_PRIV(urls,                          gobj_read_json_attr)
-    if(!json_is_array(priv->urls)) {
-        log_error(0,
-            "gobj",         "%s", gobj_full_name(gobj),
-            "function",     "%s", __FUNCTION__,
-            "msgset",       "%s", MSGSET_PARAMETER_ERROR,
-            "msg",          "%s", "urls MUST BE an json array!",
-            NULL
-        );
-    }
-    priv->n_urls = json_array_size(priv->urls);
 }
 
 /***************************************************************************
@@ -177,17 +160,6 @@ PRIVATE void mt_writing(hgobj gobj, const char *path)
     PRIVATE_DATA *priv = gobj_priv_data(gobj);
 
     IF_EQ_SET_PRIV(timeout_inactivity,              gobj_read_int32_attr)
-    ELIF_EQ_SET_PRIV(urls,                          gobj_read_json_attr)
-        if(!json_is_array(priv->urls)) {
-            log_error(0,
-                "gobj",         "%s", gobj_full_name(gobj),
-                "function",     "%s", __FUNCTION__,
-                "msgset",       "%s", MSGSET_PARAMETER_ERROR,
-                "msg",          "%s", "urls MUST BE an json array!",
-                NULL
-            );
-        }
-        priv->n_urls = json_array_size(priv->urls);
     END_EQ_SET_PRIV()
 }
 
@@ -311,30 +283,6 @@ PRIVATE void noticeProcessor(void *arg, const char *message)
 }
 
 /***************************************************************************
- *  Return the destination url to connect from
- *  the ``urls`` attribute.
- *  If there are multiple urls try to connect to each cyclically.
- ***************************************************************************/
-PRIVATE BOOL get_next_dst(
-    hgobj gobj,
-    char *url, int url_len
-)
-{
-    PRIVATE_DATA *priv = gobj_priv_data(gobj);
-    if(priv->n_urls) {
-        const char *url_ = json_list_str(priv->urls, priv->idx_dst);
-        snprintf(url, url_len, "%s", url_);
-
-        // Point to next dst
-        ++priv->idx_dst;
-        priv->idx_dst = priv->idx_dst % priv->n_urls;
-        return TRUE;
-    }
-
-    return FALSE;
-}
-
-/***************************************************************************
  *
  ***************************************************************************/
 PRIVATE void set_connected(hgobj gobj)
@@ -357,6 +305,7 @@ PRIVATE void on_close_cb(uv_handle_t* handle)
         PQfinish(priv->conn);
         priv->conn = 0;
     }
+    gobj_write_bool_attr(gobj, "opened", FALSE);
     gobj_send_event(gobj, "EV_STOPPED", 0, gobj);
 }
 
@@ -742,11 +691,7 @@ PRIVATE int ac_connect(hgobj gobj, const char *event, json_t *kw, hgobj src)
 {
     PRIVATE_DATA *priv = gobj_priv_data(gobj);
 
-    char url[PATH_MAX];
-    get_next_dst(
-        gobj,
-        url, sizeof(url)
-    );
+    const char *url = gobj_read_str_attr(gobj, "url");
     if(empty_string(url)) {
         log_error(0,
             "gobj",         "%s", gobj_full_name(gobj),
@@ -818,14 +763,10 @@ PRIVATE int ac_disconnected(hgobj gobj, const char *event, json_t *kw, hgobj src
     PRIVATE_DATA *priv = gobj_priv_data(gobj);
 
     if(gobj_is_running(gobj)) {
-        if (priv->n_urls > 0 && priv->idx_dst > 0) {
-            set_timeout(priv->timer, 100);
-        } else {
-            set_timeout(
-                priv->timer,
-                gobj_read_int32_attr(gobj, "timeout_between_connections")
-            );
-        }
+        set_timeout(
+            priv->timer,
+            gobj_read_int32_attr(gobj, "timeout_between_connections")
+        );
     }
 
     if(priv->inform_disconnected) {
@@ -865,6 +806,7 @@ PRIVATE int ac_connected(hgobj gobj, const char *event, json_t *kw, hgobj src)
         set_timeout(priv->timer, priv->timeout_inactivity);
     }
 
+    gobj_write_bool_attr(gobj, "opened", TRUE);
     priv->inform_disconnected = TRUE;
     gobj_publish_event(gobj, "EV_ON_OPEN", 0);
 
