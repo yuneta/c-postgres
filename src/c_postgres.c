@@ -273,13 +273,23 @@ PRIVATE void noticeProcessor(void *arg, const char *message)
 {
     hgobj gobj = arg;
 
-    log_error(0,
-        "gobj",         "%s", gobj_full_name(gobj),
-        "function",     "%s", __FUNCTION__,
-        "msgset",       "%s", MSGSET_DATABASE_ERROR,
-        "msg",          "%s", message,
-        NULL
-    );
+    if(strstr(message, "NOTICE:")) {
+        log_warning(0,
+            "gobj",         "%s", gobj_full_name(gobj),
+            "function",     "%s", __FUNCTION__,
+            "msgset",       "%s", MSGSET_DATABASE_ERROR,
+            "msg",          "%s", message,
+            NULL
+        );
+    } else {
+        log_error(0,
+            "gobj",         "%s", gobj_full_name(gobj),
+            "function",     "%s", __FUNCTION__,
+            "msgset",       "%s", MSGSET_DATABASE_ERROR,
+            "msg",          "%s", message,
+            NULL
+        );
+    }
 }
 
 /***************************************************************************
