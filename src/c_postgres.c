@@ -522,6 +522,9 @@ PRIVATE int pull_queue(hgobj gobj)
 
     if(priv->cur_query) {
         // query in progress
+        if(gobj_trace_level(gobj) & TRACE_MESSAGES) {
+            trace_msg("cur_query in progress");
+        }
         return 0;
     }
 
@@ -608,10 +611,9 @@ PRIVATE int process_result(hgobj gobj, PGresult* result)
     json_t *kw_result = priv->cur_query;
     priv->cur_query = 0;
 
-
     ExecStatusType st = PQresultStatus(result);
-    BOOL with_binaries = PQbinaryTuples(result);
-    trace_msg("with_binaries =========> %d", with_binaries);
+    //BOOL with_binaries = PQbinaryTuples(result);
+    //trace_msg("with_binaries =========> %d", with_binaries);
 
     switch(st) {
         case PGRES_TUPLES_OK:
@@ -873,6 +875,19 @@ PRIVATE int ac_enqueue_query(hgobj gobj, const char *event, json_t *kw, hgobj sr
 /***************************************************************************
  *
  ***************************************************************************/
+PRIVATE int ac_clear_queue(hgobj gobj, const char *event, json_t *kw, hgobj src)
+{
+    PRIVATE_DATA *priv = gobj_priv_data(gobj);
+
+    json_array_clear(priv->dl_queries);
+
+    KW_DECREF(kw);
+    return 0;
+}
+
+/***************************************************************************
+ *
+ ***************************************************************************/
 PRIVATE int ac_drop(hgobj gobj, const char *event, json_t *kw, hgobj src)
 {
     PRIVATE_DATA *priv = gobj_priv_data(gobj);
@@ -904,7 +919,8 @@ PRIVATE int ac_stopped(hgobj gobj, const char *event, json_t *kw, hgobj src)
  ***************************************************************************/
 PRIVATE const EVENT input_events[] = {
     // top input
-    {"EV_SEND_QUERY",     EVF_PUBLIC_EVENT,  0,  ""},
+    {"EV_SEND_QUERY",       EVF_PUBLIC_EVENT,  0,  ""},
+    {"EV_CLEAR_QUEUE",      EVF_PUBLIC_EVENT,  0,  ""},
     {"EV_CONNECT",          0,  0,  ""},
     {"EV_DROP",             0,  0,  ""},
 
@@ -934,12 +950,14 @@ PRIVATE const char *state_names[] = {
 PRIVATE EV_ACTION ST_DISCONNECTED[] = {
     {"EV_CONNECT",          ac_connect,                 "ST_WAIT_CONNECTED"},
     {"EV_SEND_QUERY",       ac_enqueue_query,           0},
+    {"EV_CLEAR_QUEUE",      ac_clear_queue,             0},
     {"EV_TIMEOUT",          ac_timeout_disconnected,    0},
     {"EV_STOPPED",          ac_stopped,                 0},
     {0,0,0}
 };
 PRIVATE EV_ACTION ST_WAIT_CONNECTED[] = {
     {"EV_SEND_QUERY",       ac_enqueue_query,           0},
+    {"EV_CLEAR_QUEUE",      ac_clear_queue,             0},
     {"EV_CONNECTED",        ac_connected,               "ST_CONNECTED"},
     {"EV_DISCONNECTED",     ac_disconnected,            "ST_DISCONNECTED"},
     {"EV_STOPPED",          ac_stopped,                 "ST_DISCONNECTED"},
@@ -949,6 +967,7 @@ PRIVATE EV_ACTION ST_WAIT_CONNECTED[] = {
 };
 PRIVATE EV_ACTION ST_CONNECTED[] = {
     {"EV_SEND_QUERY",       ac_send_query,              0},
+    {"EV_CLEAR_QUEUE",      ac_clear_queue,             0},
     {"EV_DISCONNECTED",     ac_disconnected,            "ST_DISCONNECTED"},
     {"EV_TIMEOUT",          ac_timeout_data,            0},
     {"EV_DROP",             ac_drop,                    "ST_WAIT_DISCONNECTED"},
