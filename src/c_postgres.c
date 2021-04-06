@@ -436,11 +436,8 @@ PRIVATE void on_poll_cb(uv_poll_t *req, int status, int events)
                     // No more data to send, put off UV_WRITABLE
                     uv_poll_start(&priv->uv_poll, UV_READABLE, on_poll_cb);
                 } else {
-                    uv_poll_start(&priv->uv_poll, UV_READABLE|UV_WRITABLE, on_poll_cb);
                     // == 1 more data to send, continue with UV_WRITABLE
                 }
-            } else {
-                uv_poll_start(&priv->uv_poll, UV_READABLE, on_poll_cb);
             }
 
             break;
