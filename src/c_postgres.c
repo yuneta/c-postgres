@@ -68,9 +68,7 @@ SDATA (ASN_BOOLEAN,     "opened",                       SDF_RD,         0,      
 SDATA (ASN_BOOLEAN,     "manual",                       SDF_RD,         0,              "Set true if you want connect manually"),
 SDATA (ASN_INTEGER,     "timeout_waiting_connected",    SDF_RD,         10*1000,        ""),
 SDATA (ASN_INTEGER,     "timeout_between_connections",  SDF_RD,         5*1000,         "Idle timeout to wait between attempts of connection"),
-SDATA (ASN_INTEGER,     "timeout_inactivity",           SDF_RD,         -1,
-            "Inactivity timeout to close the connection."
-            "Reconnect when new data arrived. With -1 never close."),
+SDATA (ASN_INTEGER,     "timeout_response",             SDF_WR,         30*000,         "Timeout response"),
 
 SDATA (ASN_POINTER,     "user_data",        0,                          0,              "user data"),
 SDATA (ASN_POINTER,     "user_data2",       0,                          0,              "more user data"),
@@ -105,7 +103,7 @@ SDATA_END()
  *              Private data
  *---------------------------------------------*/
 typedef struct _PRIVATE_DATA {
-    int32_t timeout_inactivity;
+    int32_t timeout_response;
     hgobj timer;
 
     PGconn *conn;
@@ -149,7 +147,7 @@ PRIVATE void mt_create(hgobj gobj)
      *  Do copy of heavy used parameters, for quick access.
      *  HACK The writable attributes must be repeated in mt_writing method.
      */
-    SET_PRIV(timeout_inactivity,            gobj_read_int32_attr)
+    SET_PRIV(timeout_response,            gobj_read_int32_attr)
 }
 
 /***************************************************************************
@@ -159,7 +157,7 @@ PRIVATE void mt_writing(hgobj gobj, const char *path)
 {
     PRIVATE_DATA *priv = gobj_priv_data(gobj);
 
-    IF_EQ_SET_PRIV(timeout_inactivity,              gobj_read_int32_attr)
+    IF_EQ_SET_PRIV(timeout_response,              gobj_read_int32_attr)
     END_EQ_SET_PRIV()
 }
 
@@ -181,6 +179,7 @@ PRIVATE void mt_destroy(hgobj gobj)
         log_debug_json(0, priv->dl_queries, "records LOST");
     }
     JSON_DECREF(priv->dl_queries);
+    JSON_DECREF(priv->cur_query);
 }
 
 /***************************************************************************
@@ -384,36 +383,49 @@ PRIVATE void on_poll_cb(uv_poll_t *req, int status, int events)
                 return;
             }
             if(events & UV_READABLE) {
-                if(PQconsumeInput(priv->conn)) {
-                    while (!PQisBusy(priv->conn)) {
-                        PGresult* result = PQgetResult(priv->conn);
-                        if(!result) {
-                            pull_queue(gobj);
-                            break;
+                do {
+                    if(PQconsumeInput(priv->conn)) {
+                        while(!PQisBusy(priv->conn)) {
+                            PGresult* result = PQgetResult(priv->conn);
+                            if(result) {
+                                // HACK Repeat PQgetResult, must return null
+                                // Don't use multiquery or PQsetSingleRowMode
+                                if(!PQgetResult(priv->conn)) {
+                                    process_result(gobj, result);
+                                    PQclear(result);
+                                } else {
+                                    log_error(0,
+                                        "gobj",         "%s", gobj_full_name(gobj),
+                                        "function",     "%s", __FUNCTION__,
+                                        "msgset",       "%s", MSGSET_DATABASE_ERROR,
+                                        "msg",          "%s", "Postgres Multiple Results",
+                                        NULL
+                                    );
+                                }
+                                break;
+                            }
                         }
-                        process_result(gobj, result);
-                        PQclear(result);
-                    }
 
-                    /*
-                     *  After read try to write
-                     */
-                    int ret = PQflush(priv->conn);
-                    if(ret < 0) {
+                        /*
+                         *  After read try to write
+                         */
+                        int ret = PQflush(priv->conn);
+                        if(ret < 0) {
+                            set_disconnected(gobj);
+                        }
+                    } else {
+                        log_error(0,
+                            "gobj",         "%s", gobj_full_name(gobj),
+                            "function",     "%s", __FUNCTION__,
+                            "msgset",       "%s", MSGSET_DATABASE_ERROR,
+                            "msg",          "%s", "PQconsumeInput FAILED",
+                            "error",        "%s", PQerrorMessage(priv->conn),
+                            NULL
+                        );
                         set_disconnected(gobj);
+                        return;
                     }
-                } else {
-                    log_error(0,
-                        "gobj",         "%s", gobj_full_name(gobj),
-                        "function",     "%s", __FUNCTION__,
-                        "msgset",       "%s", MSGSET_DATABASE_ERROR,
-                        "msg",          "%s", "PQconsumeInput failed",
-                        "error",        "%s", PQerrorMessage(priv->conn),
-                        NULL
-                    );
-                    set_disconnected(gobj);
-                    return;
-                }
+                } while(0);
             }
 
             if(events & UV_WRITABLE) {
@@ -424,8 +436,11 @@ PRIVATE void on_poll_cb(uv_poll_t *req, int status, int events)
                     // No more data to send, put off UV_WRITABLE
                     uv_poll_start(&priv->uv_poll, UV_READABLE, on_poll_cb);
                 } else {
+                    uv_poll_start(&priv->uv_poll, UV_READABLE|UV_WRITABLE, on_poll_cb);
                     // == 1 more data to send, continue with UV_WRITABLE
                 }
+            } else {
+                uv_poll_start(&priv->uv_poll, UV_READABLE, on_poll_cb);
             }
 
             break;
@@ -454,7 +469,7 @@ PRIVATE void on_poll_cb(uv_poll_t *req, int status, int events)
                     "gobj",         "%s", gobj_full_name(gobj),
                     "function",     "%s", __FUNCTION__,
                     "msgset",       "%s", MSGSET_LIBUV_ERROR,
-                    "msg",          "%s", "Postgres connection failed",
+                    "msg",          "%s", "Postgres connection FAILED",
                     "error",        "%s", PQerrorMessage(priv->conn),
                     NULL
                 );
@@ -480,6 +495,19 @@ PRIVATE void on_poll_cb(uv_poll_t *req, int status, int events)
             );
             break;
     } SWITCHS_END;
+}
+
+/***************************************************************************
+ *
+ ***************************************************************************/
+PRIVATE int clear_queue(hgobj gobj)
+{
+    PRIVATE_DATA *priv = gobj_priv_data(gobj);
+
+    json_array_clear(priv->dl_queries);
+    JSON_DECREF(priv->cur_query);
+
+    return 0;
 }
 
 /***************************************************************************
@@ -538,8 +566,18 @@ PRIVATE int pull_queue(hgobj gobj)
         if(gobj_trace_level(gobj) & TRACE_MESSAGES) {
             trace_msg("Postgres QUERY ==>\n%s\n", query);
         }
-        PQsendQuery(priv->conn, query);
+        if(!PQsendQuery(priv->conn, query)) {
+            log_error(0,
+                "gobj",         "%s", gobj_full_name(gobj),
+                "function",     "%s", __FUNCTION__,
+                "msgset",       "%s", MSGSET_DATABASE_ERROR,
+                "msg",          "%s", "PQsendQuery FAILED",
+                "error",        "%s", PQerrorMessage(priv->conn),
+                NULL
+            );
+        }
         uv_poll_start(&priv->uv_poll, UV_READABLE|UV_WRITABLE, on_poll_cb);
+        //set_timeout(priv->timer, priv->timeout_response);
     }
 
     return 0;
@@ -597,6 +635,8 @@ PRIVATE int process_result(hgobj gobj, PGresult* result)
 {
     PRIVATE_DATA *priv = gobj_priv_data(gobj);
 
+    clear_timeout(priv->timer);
+
     if(!priv->cur_query) {
         log_error(0,
             "gobj",         "%s", gobj_full_name(gobj),
@@ -610,6 +650,25 @@ PRIVATE int process_result(hgobj gobj, PGresult* result)
 
     json_t *kw_result = priv->cur_query;
     priv->cur_query = 0;
+
+    if(!result) {
+        char *error = PQerrorMessage(priv->conn);
+        log_error(0,
+            "gobj",         "%s", gobj_full_name(gobj),
+            "function",     "%s", __FUNCTION__,
+            "msgset",       "%s", MSGSET_DATABASE_ERROR,
+            "msg",          "%s", "Postgres connection closed",
+            "error",        "%s", error,
+            NULL
+        );
+        json_object_set_new(kw_result, "result", json_integer(-1));
+        json_object_set_new(kw_result, "error", json_string(error));
+        if(gobj_trace_level(gobj) & TRACE_MESSAGES) {
+            log_debug_json(0, kw_result, "<== Postgres RESULT");
+        }
+        gobj_publish_event(gobj, "EV_ON_MESSAGE", kw_result);
+        return 0;
+    }
 
     ExecStatusType st = PQresultStatus(result);
     //BOOL with_binaries = PQbinaryTuples(result);
@@ -681,7 +740,7 @@ PRIVATE int process_result(hgobj gobj, PGresult* result)
         log_debug_json(0, kw_result, "<== Postgres RESULT");
     }
 
-    gobj_publish_event(gobj, "EV_ON_RESULT", kw_result);
+    gobj_publish_event(gobj, "EV_ON_MESSAGE", kw_result);
 
     return 0;
 }
@@ -755,8 +814,6 @@ PRIVATE int ac_connect(hgobj gobj, const char *event, json_t *kw, hgobj src)
  ***************************************************************************/
 PRIVATE int ac_timeout_disconnected(hgobj gobj, const char *event, json_t *kw, hgobj src)
 {
-//     PRIVATE_DATA *priv = gobj_priv_data(gobj);
-
     if (gobj_read_bool_attr(gobj, "manual")) {
         return 0;
     }
@@ -814,9 +871,6 @@ PRIVATE int ac_connected(hgobj gobj, const char *event, json_t *kw, hgobj src)
     PRIVATE_DATA *priv = gobj_priv_data(gobj);
 
     clear_timeout(priv->timer);
-    if (priv->timeout_inactivity > 0) {
-        set_timeout(priv->timer, priv->timeout_inactivity);
-    }
 
     gobj_write_bool_attr(gobj, "opened", TRUE);
     priv->inform_disconnected = TRUE;
@@ -833,7 +887,24 @@ PRIVATE int ac_connected(hgobj gobj, const char *event, json_t *kw, hgobj src)
  ***************************************************************************/
 PRIVATE int ac_timeout_data(hgobj gobj, const char *event, json_t *kw, hgobj src)
 {
+    PRIVATE_DATA *priv = gobj_priv_data(gobj);
 
+    json_t *kw_result = priv->cur_query;
+    priv->cur_query = 0;
+
+    log_error(0,
+        "gobj",         "%s", gobj_full_name(gobj),
+        "function",     "%s", __FUNCTION__,
+        "msgset",       "%s", MSGSET_DATABASE_ERROR,
+        "msg",          "%s", "Postgres timeout",
+        NULL
+    );
+    json_object_set_new(kw_result, "result", json_integer(-1));
+    json_object_set_new(kw_result, "error", json_string("Postgres timeout"));
+    if(gobj_trace_level(gobj) & TRACE_MESSAGES) {
+        log_debug_json(0, kw_result, "<== Postgres RESULT");
+    }
+    gobj_publish_event(gobj, "EV_ON_MESSAGE", kw_result);
     KW_DECREF(kw);
     return 0;
 }
@@ -847,8 +918,8 @@ PRIVATE int ac_send_query(hgobj gobj, const char *event, json_t *kw, hgobj src)
 {
     PRIVATE_DATA *priv = gobj_priv_data(gobj);
 
-    if (priv->timeout_inactivity > 0) {
-        set_timeout(priv->timer, priv->timeout_inactivity);
+    if (priv->timeout_response > 0) {
+        set_timeout(priv->timer, priv->timeout_response);
     }
 
     push_queue(gobj, kw);
@@ -877,9 +948,7 @@ PRIVATE int ac_enqueue_query(hgobj gobj, const char *event, json_t *kw, hgobj sr
  ***************************************************************************/
 PRIVATE int ac_clear_queue(hgobj gobj, const char *event, json_t *kw, hgobj src)
 {
-    PRIVATE_DATA *priv = gobj_priv_data(gobj);
-
-    json_array_clear(priv->dl_queries);
+    clear_queue(gobj);
 
     KW_DECREF(kw);
     return 0;
@@ -936,7 +1005,7 @@ PRIVATE const EVENT input_events[] = {
 PRIVATE const EVENT output_events[] = {
     {"EV_ON_OPEN",          EVF_PUBLIC_EVENT,   0,  0},
     {"EV_ON_CLOSE",         EVF_PUBLIC_EVENT,   0,  0},
-    {"EV_ON_RESULT",        EVF_PUBLIC_EVENT,   0,  0},
+    {"EV_ON_MESSAGE",       EVF_PUBLIC_EVENT,   0,  0},
     {NULL, 0, 0, ""}
 };
 PRIVATE const char *state_names[] = {
