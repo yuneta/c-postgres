@@ -3,7 +3,49 @@
  *          Postgres GClass.
  *
  *          Postgress uv-mixin for Yuneta
- *
+
+DEBUG: 2021-03-25T18:14:07.407600735+0100 - ========================> field rowid, Oid 23
+DEBUG: 2021-03-25T18:14:07.407617695+0100 - ========================> field id, Oid 1043
+DEBUG: 2021-03-25T18:14:07.407625417+0100 - ========================> field name, Oid 1043
+DEBUG: 2021-03-25T18:14:07.407632070+0100 - ========================> field event, Oid 1043
+DEBUG: 2021-03-25T18:14:07.407638786+0100 - ========================> field tm, Oid 1114
+DEBUG: 2021-03-25T18:14:07.407645374+0100 - ========================> field priority, Oid 23
+DEBUG: 2021-03-25T18:14:07.407652369+0100 - ========================> field gps_fixed, Oid 16
+DEBUG: 2021-03-25T18:14:07.407659127+0100 - ========================> field accuracy, Oid 23
+DEBUG: 2021-03-25T18:14:07.407665820+0100 - ========================> field speed, Oid 23
+DEBUG: 2021-03-25T18:14:07.407672895+0100 - ========================> field battery, Oid 23
+DEBUG: 2021-03-25T18:14:07.407679308+0100 - ========================> field altitude, Oid 23
+DEBUG: 2021-03-25T18:14:07.407686112+0100 - ========================> field heading, Oid 23
+DEBUG: 2021-03-25T18:14:07.407692778+0100 - ========================> field longitude, Oid 700
+DEBUG: 2021-03-25T18:14:07.407699390+0100 - ========================> field latitude, Oid 700
+
+#define VARCHAROID 1043     varchar
+#define INT4OID     23      integer
+#define TIMESTAMPOID 1114   timestamp           my time
+#define BOOLOID 16          boolean             my boolean
+#define FLOAT4OID 700       real                my real
+#define FLOAT8OID 701       double precision    my double
+#define INT8OID 20          bigint              (8 bytes, json_int_t) my integer, o mejor numeric?
+#define TEXTOID 25          text                (my string)
+#define NUMERICOID 1700     numeric             (my integer)? NaN and infinity values are disallowed
+                                                up to 131072 digits before the decimal point;
+                                                up to 16383 digits after the decimal point
+#define JSONOID 114         json
+
+                            text                my json, object/dict, list/array
+
+
+string      =>  text
+integer     =>  bigint
+real        =>  real
+double      =>  double precision
+null        =>  null?
+time        =>  timestamp
+boolean     =>  boolean
+json        =>  text
+blob        =>  text
+object ...  =>  text
+
  *          Copyright (c) 2021 Niyamaka.
  *          All Rights Reserved.
  ***********************************************************************/
@@ -16,6 +58,15 @@
 /***************************************************************************
  *              Constants
  ***************************************************************************/
+#define INT4OID         23      // integer
+#define TIMESTAMPOID    1114    // timestamp        my time
+#define BOOLOID         16      // boolean          my boolean
+#define FLOAT4OID       700     // real             my real
+#define FLOAT8OID       701     // double precision my double
+#define INT8OID         20      // bigint (8 bytes, json_int_t) my integer
+#define TEXTOID         25      // text             my string
+#define NUMERICOID      1700    // numeric          NaN and infinity values are disallowed
+#define JSONOID         114     // json
 
 /***************************************************************************
  *              Structures
@@ -574,7 +625,7 @@ PRIVATE int pull_queue(hgobj gobj)
             );
         }
         uv_poll_start(&priv->uv_poll, UV_READABLE|UV_WRITABLE, on_poll_cb);
-        //set_timeout(priv->timer, priv->timeout_response);
+        //set_timeout(priv->timer, priv->timeout_response); falla, no sé porqué
     }
 
     return 0;
@@ -582,51 +633,6 @@ PRIVATE int pull_queue(hgobj gobj)
 
 /***************************************************************************
  *
-
-DEBUG: 2021-03-25T18:14:07.407600735+0100 - ========================> field rowid, Oid 23
-DEBUG: 2021-03-25T18:14:07.407617695+0100 - ========================> field id, Oid 1043
-DEBUG: 2021-03-25T18:14:07.407625417+0100 - ========================> field name, Oid 1043
-DEBUG: 2021-03-25T18:14:07.407632070+0100 - ========================> field event, Oid 1043
-DEBUG: 2021-03-25T18:14:07.407638786+0100 - ========================> field tm, Oid 1114
-DEBUG: 2021-03-25T18:14:07.407645374+0100 - ========================> field priority, Oid 23
-DEBUG: 2021-03-25T18:14:07.407652369+0100 - ========================> field gps_fixed, Oid 16
-DEBUG: 2021-03-25T18:14:07.407659127+0100 - ========================> field accuracy, Oid 23
-DEBUG: 2021-03-25T18:14:07.407665820+0100 - ========================> field speed, Oid 23
-DEBUG: 2021-03-25T18:14:07.407672895+0100 - ========================> field battery, Oid 23
-DEBUG: 2021-03-25T18:14:07.407679308+0100 - ========================> field altitude, Oid 23
-DEBUG: 2021-03-25T18:14:07.407686112+0100 - ========================> field heading, Oid 23
-DEBUG: 2021-03-25T18:14:07.407692778+0100 - ========================> field longitude, Oid 700
-DEBUG: 2021-03-25T18:14:07.407699390+0100 - ========================> field latitude, Oid 700
-
-#define VARCHAROID 1043     varchar
-#define INT4OID     23      integer
-#define TIMESTAMPOID 1114   timestamp           my time
-#define BOOLOID 16          boolean             my boolean
-#define FLOAT4OID 700       real                my real
-#define FLOAT8OID 701       double precision    my double
-#define INT8OID 20          bigint              (8 bytes, json_int_t) my integer, o mejor numeric?
-#define TEXTOID 25          text                (my string)
-#define NUMERICOID 1700     numeric             (my integer)? NaN and infinity values are disallowed
-                                                up to 131072 digits before the decimal point;
-                                                up to 16383 digits after the decimal point
-#define JSONOID 114         json
-
-                            text                my json, object/dict, list/array
-
-
-string      =>  text
-integer     =>  bigint
-real        =>  real
-double      =>  double precision
-null        =>  null?
-time        =>  timestamp
-boolean     =>  boolean
-json        =>  text
-blob        =>  text
-object ...  =>  text
-
-
-
  ***************************************************************************/
 PRIVATE int process_result(hgobj gobj, PGresult* result)
 {
@@ -668,8 +674,16 @@ PRIVATE int process_result(hgobj gobj, PGresult* result)
     }
 
     ExecStatusType st = PQresultStatus(result);
-    //BOOL with_binaries = PQbinaryTuples(result);
-    //trace_msg("with_binaries =========> %d", with_binaries);
+    BOOL with_binaries = PQbinaryTuples(result);
+    if(with_binaries) {
+        log_error(0,
+            "gobj",         "%s", gobj_full_name(gobj),
+            "function",     "%s", __FUNCTION__,
+            "msgset",       "%s", MSGSET_INTERNAL_ERROR,
+            "msg",          "%s", "Postgres Binary response NOT SUPPORTED",
+            NULL
+        );
+    }
 
     switch(st) {
         case PGRES_TUPLES_OK:
@@ -686,7 +700,7 @@ PRIVATE int process_result(hgobj gobj, PGresult* result)
                 json_array_append_new(jn_data, row);
                 for(int c=0; c<cols; c++) {
                     char *col_name = PQfname(result, c);
-                    int format = PQfformat(result, c);
+                    //int format = PQfformat(result, c);
 
                     char *v = PQgetvalue(result, r, c);
                     if(empty_string(v)) {
@@ -698,9 +712,46 @@ PRIVATE int process_result(hgobj gobj, PGresult* result)
                         json_object_set_new(row, col_name, json_null());
                     } else {
                         Oid oid = PQftype(result, c);
-                        trace_msg("========================> field %s, Oid %d", col_name, oid);
+                        switch(oid) {
+                            case INT4OID:       // integer
+                                json_object_set_new(row, col_name, json_integer(atoi(v)));
+                                break;
+                            case INT8OID:       // bigint
+                                json_object_set_new(row, col_name, json_integer(atol(v)));
+                                break;
+                            case TIMESTAMPOID:  // timestamp
+                                // TODO conver to time_t
+                                json_object_set_new(row, col_name, json_string(v));
+                                break;
+                            case BOOLOID:       // boolean
+                                if(strcmp(v, "t")==0) {
+                                    json_object_set_new(row, col_name, json_true());
+                                } else {
+                                    json_object_set_new(row, col_name, json_false());
+                                }
+                                break;
+                            case FLOAT4OID:     // real
+                                json_object_set_new(row, col_name, json_real(atof(v)));
+                                break;
+                            case FLOAT8OID:     // double precision
+                                json_object_set_new(row, col_name, json_real(atof(v)));
+                                break;
+                            case TEXTOID:       // text
+                                json_object_set_new(row, col_name, json_string(v));
+                                break;
+                            default:
+                                json_object_set_new(row, col_name, json_string(v));
+                                log_error(0,
+                                    "gobj",         "%s", gobj_full_name(gobj),
+                                    "function",     "%s", __FUNCTION__,
+                                    "msgset",       "%s", MSGSET_INTERNAL_ERROR,
+                                    "msg",          "%s", "Postgres type NOT IMPLEMENTED",
+                                    "oid",          "%d", oid,
+                                    NULL
+                                );
+                                break;
 
-                        json_object_set_new(row, col_name, json_string(v));
+                        }
                     }
                 }
             }
