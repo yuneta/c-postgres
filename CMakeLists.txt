@@ -27,7 +27,7 @@ endif(CMAKE_BUILD_TYPE MATCHES Debug)
 add_definitions(-D_GNU_SOURCE)
 add_definitions(-D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64)
 
-find_package(PostgreSQL REQUIRED)
+# find_package(PostgreSQL REQUIRED)
 
 include_directories(BEFORE /yuneta/development/output/include)
 
