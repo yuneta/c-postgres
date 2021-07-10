@@ -29,7 +29,7 @@ add_definitions(-D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64)
 
 # find_package(PostgreSQL REQUIRED)
 
-include_directories(BEFORE /yuneta/development/output/include)
+include_directories(/yuneta/development/output/include)
 
 ##############################################
 #   Source
