@@ -4,7 +4,6 @@
  *              Copyright (c) 2018 Niyamaka.
  *              All Rights Reserved.
  ****************************************************************************/
-
 #pragma once
 
 #ifdef __cplusplus
