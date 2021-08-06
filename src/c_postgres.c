@@ -115,7 +115,7 @@ PRIVATE sdata_desc_t tattr_desc[] = {
 /*-ATTR-type------------name----------------------------flag------------default---------description---------- */
 SDATA (ASN_JSON,        "schema",                       SDF_RD,         0,              "Database schema"),
 SDATA (ASN_OCTET_STR,   "url",                          SDF_PERSIST|SDF_WR,0,           "Url"),
-SDATA (ASN_BOOLEAN,     "opened",                       SDF_RD,         0,              "Channel opened (opened is higher level than connected"),
+SDATA (ASN_BOOLEAN,     "connected",                    SDF_RD,         0,              "Connection state. Important filter!"),
 SDATA (ASN_BOOLEAN,     "manual",                       SDF_RD,         0,              "Set true if you want connect manually"),
 SDATA (ASN_INTEGER,     "timeout_waiting_connected",    SDF_RD,         10*1000,        ""),
 SDATA (ASN_INTEGER,     "timeout_between_connections",  SDF_RD,         5*1000,         "Idle timeout to wait between attempts of connection"),
@@ -365,7 +365,7 @@ PRIVATE void on_close_cb(uv_handle_t* handle)
         PQfinish(priv->conn);
         priv->conn = 0;
     }
-    gobj_write_bool_attr(gobj, "opened", FALSE);
+    gobj_write_bool_attr(gobj, "connected", FALSE);
     gobj_send_event(gobj, "EV_STOPPED", 0, gobj);
 }
 
@@ -920,7 +920,7 @@ PRIVATE int ac_connected(hgobj gobj, const char *event, json_t *kw, hgobj src)
 
     clear_timeout(priv->timer);
 
-    gobj_write_bool_attr(gobj, "opened", TRUE);
+    gobj_write_bool_attr(gobj, "connected", TRUE);
     priv->inform_disconnected = TRUE;
     gobj_publish_event(gobj, "EV_ON_OPEN", 0);
 
