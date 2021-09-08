@@ -85,6 +85,8 @@ PRIVATE int pull_queue(hgobj gobj);
  ***************************************************************************/
 PRIVATE json_t *cmd_help(hgobj gobj, const char *cmd, json_t *kw, hgobj src);
 PRIVATE json_t *cmd_authzs(hgobj gobj, const char *cmd, json_t *kw, hgobj src);
+PRIVATE json_t *cmd_list_size(hgobj gobj, const char *cmd, json_t *kw, hgobj src);
+PRIVATE json_t *cmd_list_queue(hgobj gobj, const char *cmd, json_t *kw, hgobj src);
 
 PRIVATE sdata_desc_t pm_help[] = {
 /*-PM----type-----------name------------flag------------default-----description---------- */
@@ -104,6 +106,8 @@ PRIVATE sdata_desc_t command_table[] = {
 /*-CMD---type-----------name----------------alias-------items-----------json_fn---------description---------- */
 SDATACM (ASN_SCHEMA,    "help",             a_help,     pm_help,        cmd_help,       "Command's help"),
 SDATACM (ASN_SCHEMA,    "authzs",           0,          pm_authzs,      cmd_authzs,     "Authorization's help"),
+SDATACM (ASN_SCHEMA,    "list-size",        0,          0,              cmd_list_size,  "Size of queue's messages"),
+SDATACM (ASN_SCHEMA,    "list-queue",       0,          0,              cmd_list_queue, "List queue's messages"),
 SDATA_END()
 };
 
@@ -304,6 +308,40 @@ PRIVATE json_t *cmd_help(hgobj gobj, const char *cmd, json_t *kw, hgobj src)
 PRIVATE json_t *cmd_authzs(hgobj gobj, const char *cmd, json_t *kw, hgobj src)
 {
     return gobj_build_authzs_doc(gobj, cmd, kw, src);
+}
+
+/***************************************************************************
+ *
+ ***************************************************************************/
+PRIVATE json_t *cmd_list_size(hgobj gobj, const char *cmd, json_t *kw, hgobj src)
+{
+    PRIVATE_DATA *priv = gobj_priv_data(gobj);
+
+    return msg_iev_build_webix(
+        gobj,
+        0,
+        json_sprintf("Messages in queue: %d", (int)json_array_size(priv->dl_queries)),
+        0,
+        0, // owned
+        kw  // owned
+    );
+}
+
+/***************************************************************************
+ *
+ ***************************************************************************/
+PRIVATE json_t *cmd_list_queue(hgobj gobj, const char *cmd, json_t *kw, hgobj src)
+{
+    PRIVATE_DATA *priv = gobj_priv_data(gobj);
+
+    return msg_iev_build_webix(
+        gobj,
+        0,
+        json_sprintf("Messages in queue: %d", (int)json_array_size(priv->dl_queries)),
+        0,
+        json_incref(priv->dl_queries), // owned
+        kw  // owned
+    );
 }
 
 
