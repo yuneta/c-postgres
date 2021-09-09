@@ -19,11 +19,11 @@ Utils
 Number of rows::
 
     select COUNT(*) from tablename;
-    
+
 Size in megas::
 
     \dt+
-    
+
 Delete all rows::
 
     delete from tablename;
@@ -31,16 +31,16 @@ Delete all rows::
 List tables::
 
     \dt+
-    
+
 Desc of table::
 
     \d+ tablename;
-    
+
 See last record::
 
-    SELECT * FROM tracks_purezadb order by rowid DESC limit 1;
-    
-    
+    SELECT id,rowid,__created_at__ FROM tracks_purezadb order by rowid DESC limit 1;
+
+
 License
 -------
 

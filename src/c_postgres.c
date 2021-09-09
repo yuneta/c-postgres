@@ -636,9 +636,13 @@ PRIVATE int pull_queue(hgobj gobj)
 
     if(priv->cur_query) {
         // query in progress
-        if(gobj_trace_level(gobj) & TRACE_MESSAGES) {
-            trace_msg("cur_query in progress");
-        }
+        log_warning(0,
+            "gobj",         "%s", gobj_full_name(gobj),
+            "function",     "%s", __FUNCTION__,
+            "msgset",       "%s", MSGSET_DATABASE_ERROR,
+            "msg",          "%s", "postgres query in progress",
+            NULL
+        );
         return 0;
     }
 
