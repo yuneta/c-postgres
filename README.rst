@@ -12,6 +12,35 @@ To fix this error in ubuntu 20.04 "fatal error: postgresql/libpq-fe.h: No such f
 
     sudo apt-get install --reinstall libpq-dev
 
+
+Utils
+-----
+
+Number of rows::
+
+    select COUNT(*) from tablename;
+    
+Size in megas::
+
+    \dt+
+    
+Delete all rows::
+
+    delete from tablename;
+
+List tables::
+
+    \dt+
+    
+Desc of table::
+
+    \d+ tablename;
+    
+See last record::
+
+    SELECT * FROM tracks_purezadb order by rowid DESC limit 1;
+    
+    
 License
 -------
 
