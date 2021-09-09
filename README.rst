@@ -8,7 +8,7 @@ install
 
 sudo apt-get install libpq-dev postgresql-server-dev-all
 
-With error in ubuntu 20.04 fatal error: postgresql/libpq-fe.h: No such file or directory::
+To fix this error in ubuntu 20.04 "fatal error: postgresql/libpq-fe.h: No such file or directory" ::
 
     sudo apt-get install --reinstall libpq-dev
 
