@@ -2,7 +2,8 @@
  *          C_POSTGRES.C
  *          Postgres GClass.
  *
- *          Postgress uv-mixin for Yuneta
+ *          Postgres uv-mixin for Yuneta
+ *          NOTE Object with __queries_in_queue__
 
 DEBUG: 2021-03-25T18:14:07.407600735+0100 - ========================> field rowid, Oid 23
 DEBUG: 2021-03-25T18:14:07.407617695+0100 - ========================> field id, Oid 1043
@@ -78,6 +79,7 @@ object ...  =>  text
 PRIVATE void on_poll_cb(uv_poll_t *req, int status, int events);
 PRIVATE void on_close_cb(uv_handle_t* handle);
 PRIVATE int process_result(hgobj gobj, PGresult* result);
+PRIVATE int publish_result(hgobj gobj, json_t *kw);
 PRIVATE int pull_queue(hgobj gobj);
 
 /***************************************************************************
@@ -711,8 +713,7 @@ PRIVATE int process_result(hgobj gobj, PGresult* result)
         if(gobj_trace_level(gobj) & TRACE_MESSAGES) {
             log_debug_json(0, kw_result, "<== Postgres RESULT");
         }
-        gobj_publish_event(gobj, "EV_ON_MESSAGE", kw_result);
-        return 0;
+        return publish_result(gobj, kw_result);
     }
 
     ExecStatusType st = PQresultStatus(result);
@@ -830,9 +831,43 @@ PRIVATE int process_result(hgobj gobj, PGresult* result)
         log_debug_json(0, kw_result, "<== Postgres RESULT");
     }
 
-    gobj_publish_event(gobj, "EV_ON_MESSAGE", kw_result);
+    return publish_result(gobj, kw_result);
+}
 
-    return 0;
+/***************************************************************************
+ *  NOTE Object with __queries_in_queue__
+ ***************************************************************************/
+PRIVATE int publish_result(hgobj gobj, json_t* kw)
+{
+    if(kw_has_key(kw, "dst")) {
+        json_t *jn_dst = kw_get_dict_value(kw, "dst", 0, 0);
+        if(json_is_integer(jn_dst)) {
+            hgobj dst = (hgobj)json_integer_value(jn_dst);
+            return gobj_send_event(dst, "EV_ON_MESSAGE", kw, gobj);
+
+        } else if(json_is_string(jn_dst)) {
+            const char *sdst = json_string_value(jn_dst);
+            hgobj dst = gobj_find_unique_gobj(sdst, TRUE);
+            if(dst) {
+                return gobj_send_event(dst, "EV_ON_MESSAGE", kw, gobj);
+            } else {
+                // Error already logged
+                // Continue below
+            }
+
+        } else {
+            log_error(0,
+                "gobj",         "%s", gobj_full_name(gobj),
+                "function",     "%s", __FUNCTION__,
+                "msgset",       "%s", MSGSET_INTERNAL_ERROR,
+                "msg",          "%s", "dst of __queries_in_queue__ UNKNOWN",
+                NULL
+            );
+            log_debug_json(0, kw, "dst of __queries_in_queue__ UNKNOWN");
+            // Continue below
+        }
+    }
+    return gobj_publish_event(gobj, "EV_ON_MESSAGE", kw);
 }
 
 
@@ -994,15 +1029,18 @@ PRIVATE int ac_timeout_data(hgobj gobj, const char *event, json_t *kw, hgobj src
     if(gobj_trace_level(gobj) & TRACE_MESSAGES) {
         log_debug_json(0, kw_result, "<== Postgres RESULT");
     }
-    gobj_publish_event(gobj, "EV_ON_MESSAGE", kw_result);
     KW_DECREF(kw);
-    return 0;
+    return publish_result(gobj, kw_result);
 }
 
 /***************************************************************************
+ *  NOTE Object with __queries_in_queue__
+ *  If it exists "dst" then use gobj_send_event() else use gobj_publish_event()
     {
+        "dst": "unique-gobj" or 99999 (hgobj)
         "query": "..."
     }
+ *
  ***************************************************************************/
 PRIVATE int ac_send_query(hgobj gobj, const char *event, json_t *kw, hgobj src)
 {
