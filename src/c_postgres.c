@@ -836,6 +836,8 @@ PRIVATE int process_result(hgobj gobj, PGresult* result)
 
 /***************************************************************************
  *  NOTE Object with __queries_in_queue__
+ *  If in the query there is `dst` then use it to use gobj_send_event()
+ *  else use gobj_publish_event()
  ***************************************************************************/
 PRIVATE int publish_result(hgobj gobj, json_t* kw)
 {
