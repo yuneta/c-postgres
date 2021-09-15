@@ -844,7 +844,7 @@ PRIVATE int publish_result(hgobj gobj, json_t* kw)
     if(kw_has_key(kw, "dst")) {
         json_t *jn_dst = kw_get_dict_value(kw, "dst", 0, 0);
         if(json_is_integer(jn_dst)) {
-            hgobj dst = (hgobj)json_integer_value(jn_dst);
+            hgobj dst = (hgobj)(size_t)json_integer_value(jn_dst);
             return gobj_send_event(dst, "EV_ON_MESSAGE", kw, gobj);
 
         } else if(json_is_string(jn_dst)) {
