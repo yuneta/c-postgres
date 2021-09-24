@@ -121,7 +121,7 @@ PRIVATE sdata_desc_t tattr_desc[] = {
 /*-ATTR-type------------name----------------------------flag------------default---------description---------- */
 SDATA (ASN_JSON,        "schema",                       SDF_RD,         0,              "Database schema"),
 SDATA (ASN_OCTET_STR,   "url",                          SDF_PERSIST|SDF_WR,0,           "Url"),
-SDATA (ASN_BOOLEAN,     "connected",                    SDF_RD,         0,              "Connection state. Important filter!"),
+SDATA (ASN_BOOLEAN,     "connected",                    SDF_RD|SDF_STATS,0,             "Connection state. Important filter!"),
 SDATA (ASN_BOOLEAN,     "manual",                       SDF_RD,         0,              "Set true if you want connect manually"),
 SDATA (ASN_INTEGER,     "timeout_waiting_connected",    SDF_RD,         10*1000,        ""),
 SDATA (ASN_INTEGER,     "timeout_between_connections",  SDF_RD,         5*1000,         "Idle timeout to wait between attempts of connection"),
