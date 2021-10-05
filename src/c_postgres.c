@@ -89,6 +89,7 @@ PRIVATE json_t *cmd_help(hgobj gobj, const char *cmd, json_t *kw, hgobj src);
 PRIVATE json_t *cmd_authzs(hgobj gobj, const char *cmd, json_t *kw, hgobj src);
 PRIVATE json_t *cmd_list_size(hgobj gobj, const char *cmd, json_t *kw, hgobj src);
 PRIVATE json_t *cmd_list_queue(hgobj gobj, const char *cmd, json_t *kw, hgobj src);
+PRIVATE json_t *cmd_view_channels(hgobj gobj, const char *cmd, json_t *kw, hgobj src);
 
 PRIVATE sdata_desc_t pm_help[] = {
 /*-PM----type-----------name------------flag------------default-----description---------- */
@@ -110,6 +111,7 @@ SDATACM (ASN_SCHEMA,    "help",             a_help,     pm_help,        cmd_help
 SDATACM (ASN_SCHEMA,    "authzs",           0,          pm_authzs,      cmd_authzs,     "Authorization's help"),
 SDATACM (ASN_SCHEMA,    "list-size",        0,          0,              cmd_list_size,  "Size of queue's messages"),
 SDATACM (ASN_SCHEMA,    "list-queue",       0,          0,              cmd_list_queue, "List queue's messages"),
+SDATACM (ASN_SCHEMA,    "view-channels",    0,          0,              cmd_view_channels, "View channels messages"),
 SDATA_END()
 };
 
@@ -346,6 +348,25 @@ PRIVATE json_t *cmd_list_queue(hgobj gobj, const char *cmd, json_t *kw, hgobj sr
     );
 }
 
+/***************************************************************************
+ *
+ ***************************************************************************/
+PRIVATE json_t *cmd_view_channels(hgobj gobj, const char *cmd, json_t *kw, hgobj src)
+{
+    return msg_iev_build_webix(
+        gobj,
+        0,
+        json_sprintf(
+            "Channel: '%s', connected: %d",
+            gobj_read_str_attr(gobj, "url"),
+            gobj_read_bool_attr(gobj, "connected")
+        ),
+        0,
+        0,
+        kw  // owned
+    );
+}
+
 
 
 
@@ -416,6 +437,17 @@ PRIVATE void set_disconnected(hgobj gobj)
 {
     PRIVATE_DATA *priv = gobj_priv_data(gobj);
 
+    if(priv->cur_query) {
+        log_error(0,
+            "gobj",         "%s", gobj_full_name(gobj),
+            "function",     "%s", __FUNCTION__,
+            "msgset",       "%s", MSGSET_DATABASE_ERROR,
+            "msg",          "%s", "cur_query LOST",
+            "query",        "%j", priv->cur_query,
+            NULL
+        );
+        JSON_DECREF(priv->cur_query);
+    }
     if(priv->conn) {
         PQfinish(priv->conn);
         priv->conn = 0;
@@ -466,7 +498,7 @@ PRIVATE void on_poll_cb(uv_poll_t *req, int status, int events)
                     "gobj",         "%s", gobj_full_name(gobj),
                     "function",     "%s", __FUNCTION__,
                     "msgset",       "%s", MSGSET_DATABASE_ERROR,
-                    "msg",          "%s", "Postgres connection closed",
+                    "msg",          "%s", "Postgres connection closed 1",
                     "error",        "%s", PQerrorMessage(priv->conn),
                     NULL
                 );
@@ -485,15 +517,32 @@ PRIVATE void on_poll_cb(uv_poll_t *req, int status, int events)
                                     process_result(gobj, result);
                                     PQclear(result);
                                 } else {
+                                    /*
+                                     *  WARNING
+                                     *  NO se puede usar multiquery
+                                     */
                                     log_error(0,
                                         "gobj",         "%s", gobj_full_name(gobj),
                                         "function",     "%s", __FUNCTION__,
                                         "msgset",       "%s", MSGSET_DATABASE_ERROR,
-                                        "msg",          "%s", "Postgres Multiple Results",
+                                        "msg",          "%s", "Postgres Multiple Results or disconnected",
                                         NULL
                                     );
+                                    /*
+                                     *  WARNING
+                                     *  Por aquí crash cuando se desconecta postgres
+                                     */
+                                    set_disconnected(gobj);
+                                    return;
                                 }
                                 break;
+                            } else {
+                                /*
+                                 *  WARNING
+                                 *  Por aquí se queda en bucle cuando se desconecta postgres
+                                 */
+                                set_disconnected(gobj);
+                                return;
                             }
                         }
 
@@ -704,7 +753,7 @@ PRIVATE int process_result(hgobj gobj, PGresult* result)
             "gobj",         "%s", gobj_full_name(gobj),
             "function",     "%s", __FUNCTION__,
             "msgset",       "%s", MSGSET_DATABASE_ERROR,
-            "msg",          "%s", "Postgres connection closed",
+            "msg",          "%s", "Postgres connection closed 3",
             "error",        "%s", error,
             NULL
         );
