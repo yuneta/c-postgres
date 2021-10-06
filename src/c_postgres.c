@@ -508,7 +508,7 @@ PRIVATE void on_poll_cb(uv_poll_t *req, int status, int events)
             if(events & UV_READABLE) {
                 do {
                     if(PQconsumeInput(priv->conn)) {
-                        while(!PQisBusy(priv->conn)) {
+                        if(!PQisBusy(priv->conn)) {
                             PGresult* result = PQgetResult(priv->conn);
                             if(result) {
                                 // HACK Repeat PQgetResult, must return null
@@ -558,6 +558,13 @@ PRIVATE void on_poll_cb(uv_poll_t *req, int status, int events)
                          */
                         int ret = PQflush(priv->conn);
                         if(ret < 0) {
+                            log_error(0,
+                                "gobj",         "%s", gobj_full_name(gobj),
+                                "function",     "%s", __FUNCTION__,
+                                "msgset",       "%s", MSGSET_DATABASE_ERROR,
+                                "msg",          "%s", "PQflush() FAILED",
+                                NULL
+                            );
                             set_disconnected(gobj);
                         }
                     } else {
@@ -578,6 +585,13 @@ PRIVATE void on_poll_cb(uv_poll_t *req, int status, int events)
             if(events & UV_WRITABLE) {
                 int ret = PQflush(priv->conn);
                 if(ret < 0) {
+                    log_error(0,
+                        "gobj",         "%s", gobj_full_name(gobj),
+                        "function",     "%s", __FUNCTION__,
+                        "msgset",       "%s", MSGSET_DATABASE_ERROR,
+                        "msg",          "%s", "PQflush() FAILED",
+                        NULL
+                    );
                     set_disconnected(gobj);
                 } else if(ret == 0) {
                     // No more data to send, put off UV_WRITABLE
@@ -688,6 +702,13 @@ PRIVATE int pull_queue(hgobj gobj)
     PRIVATE_DATA *priv = gobj_priv_data(gobj);
 
     if(PQflush(priv->conn)<0) {
+        log_error(0,
+            "gobj",         "%s", gobj_full_name(gobj),
+            "function",     "%s", __FUNCTION__,
+            "msgset",       "%s", MSGSET_DATABASE_ERROR,
+            "msg",          "%s", "PQflush() FAILED",
+            NULL
+        );
         set_disconnected(gobj);
         return -1;
     }

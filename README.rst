@@ -46,6 +46,11 @@ Add new column::
 
     ALTER TABLE tracks_purezadb ADD COLUMN noise bigint;
 
+Cortar las conexiones::
+
+    SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE pid <> pg_backend_pid() AND datname ='mulesol_local';
+
+
 License
 -------
 
