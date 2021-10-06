@@ -939,6 +939,7 @@ PRIVATE int publish_result(hgobj gobj, json_t* kw)
             } else {
                 // Error already logged
                 // Continue below
+                log_debug_json(0, kw, "Result LOST");
             }
 
         } else {
