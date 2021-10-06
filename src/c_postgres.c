@@ -688,6 +688,10 @@ PRIVATE int push_queue(
             NULL
         );
     } else {
+        if(gobj_trace_level(gobj) & TRACE_MESSAGES) {
+            const char *dst = kw_get_str(kw, "dst", "", 0);
+            trace_msg("PUSH Postgres QUERY dst %s ==>\n%s\n", dst?dst:"", query);
+        }
         json_array_append(priv->dl_queries, kw);
     }
 
@@ -700,18 +704,6 @@ PRIVATE int push_queue(
 PRIVATE int pull_queue(hgobj gobj)
 {
     PRIVATE_DATA *priv = gobj_priv_data(gobj);
-
-    if(PQflush(priv->conn)<0) {
-        log_error(0,
-            "gobj",         "%s", gobj_full_name(gobj),
-            "function",     "%s", __FUNCTION__,
-            "msgset",       "%s", MSGSET_DATABASE_ERROR,
-            "msg",          "%s", "PQflush() FAILED",
-            NULL
-        );
-        set_disconnected(gobj);
-        return -1;
-    }
 
     if(priv->cur_query) {
         // query in progress
@@ -734,7 +726,8 @@ PRIVATE int pull_queue(hgobj gobj)
         json_array_remove(priv->dl_queries, 0);
         const char *query = kw_get_str(priv->cur_query, "query", "", KW_REQUIRED);
         if(gobj_trace_level(gobj) & TRACE_MESSAGES) {
-            trace_msg("Postgres QUERY ==>\n%s\n", query);
+            const char *dst = kw_get_str(priv->cur_query, "dst", "", 0);
+            trace_msg("PULL Postgres QUERY dst %s ==>\n%s\n", dst?dst:"", query);
         }
         if(!PQsendQuery(priv->conn, query)) {
             log_error(0,
@@ -789,7 +782,8 @@ PRIVATE int process_result(hgobj gobj, PGresult* result)
         json_object_set_new(kw_result, "result", json_integer(-1));
         json_object_set_new(kw_result, "error", json_string(error));
         if(gobj_trace_level(gobj) & TRACE_MESSAGES) {
-            log_debug_json(0, kw_result, "<== Postgres RESULT");
+            const char *dst = kw_get_str(priv->cur_query, "dst", "", 0);
+            log_debug_json(0, kw_result, "<== Postgres RESULT dst %s ERROR", dst?dst:"");
         }
         return publish_result(gobj, kw_result);
     }
@@ -906,7 +900,8 @@ PRIVATE int process_result(hgobj gobj, PGresult* result)
     }
 
     if(gobj_trace_level(gobj) & TRACE_MESSAGES) {
-        log_debug_json(0, kw_result, "<== Postgres RESULT");
+        const char *dst = kw_get_str(priv->cur_query, "dst", "", 0);
+        log_debug_json(0, kw_result, "<== Postgres RESULT dst %s OK", dst?dst:"");
     }
 
     return publish_result(gobj, kw_result);
@@ -922,6 +917,7 @@ PRIVATE int publish_result(hgobj gobj, json_t* kw)
     if(kw_has_key(kw, "dst")) {
         json_t *jn_dst = kw_get_dict_value(kw, "dst", 0, 0);
         if(json_is_integer(jn_dst)) {
+            // HACK WARNING don't use volatil gobj's
             hgobj dst = (hgobj)(size_t)json_integer_value(jn_dst);
             return gobj_send_event(dst, "EV_ON_MESSAGE", kw, gobj);
 
@@ -1107,7 +1103,8 @@ PRIVATE int ac_timeout_data(hgobj gobj, const char *event, json_t *kw, hgobj src
     json_object_set_new(kw_result, "result", json_integer(-1));
     json_object_set_new(kw_result, "error", json_string("Postgres timeout"));
     if(gobj_trace_level(gobj) & TRACE_MESSAGES) {
-        log_debug_json(0, kw_result, "<== Postgres RESULT");
+        const char *dst = kw_get_str(priv->cur_query, "dst", "", 0);
+        log_debug_json(0, kw_result, "<== Postgres RESULT dst %s TIMEOUT", dst?dst:"");
     }
     KW_DECREF(kw);
     return publish_result(gobj, kw_result);
