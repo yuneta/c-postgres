@@ -919,6 +919,16 @@ PRIVATE int publish_result(hgobj gobj, json_t* kw)
         if(json_is_integer(jn_dst)) {
             // HACK WARNING don't use volatil gobj's
             hgobj dst = (hgobj)(size_t)json_integer_value(jn_dst);
+            if(gobj_is_volatil(dst)) {
+                log_error(0,
+                    "gobj",         "%s", gobj_full_name(gobj),
+                    "function",     "%s", __FUNCTION__,
+                    "msgset",       "%s", MSGSET_INTERNAL_ERROR,
+                    "msg",          "%s", "WARNING don't use volatil gobjs",
+                    "dst",          "%s", gobj_name(dst),
+                    NULL
+                );
+            }
             return gobj_send_event(dst, "EV_ON_MESSAGE", kw, gobj);
 
         } else if(json_is_string(jn_dst)) {
