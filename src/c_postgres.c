@@ -541,6 +541,13 @@ PRIVATE void on_poll_cb(uv_poll_t *req, int status, int events)
                                  *  WARNING
                                  *  Por aquí se queda en bucle cuando se desconecta postgres
                                  */
+                                log_error(0,
+                                    "gobj",         "%s", gobj_full_name(gobj),
+                                    "function",     "%s", __FUNCTION__,
+                                    "msgset",       "%s", MSGSET_DATABASE_ERROR,
+                                    "msg",          "%s", "Avoid LOOP?",
+                                    NULL
+                                );
                                 set_disconnected(gobj);
                                 return;
                             }
@@ -692,6 +699,7 @@ PRIVATE int pull_queue(hgobj gobj)
             "function",     "%s", __FUNCTION__,
             "msgset",       "%s", MSGSET_DATABASE_ERROR,
             "msg",          "%s", "postgres query in progress",
+            "cur_query",    "%j", priv->cur_query,
             NULL
         );
         return 0;
