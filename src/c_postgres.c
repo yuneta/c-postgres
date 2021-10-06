@@ -516,6 +516,7 @@ PRIVATE void on_poll_cb(uv_poll_t *req, int status, int events)
                                 if(!PQgetResult(priv->conn)) {
                                     process_result(gobj, result);
                                     PQclear(result);
+                                    pull_queue(gobj);
                                 } else {
                                     /*
                                      *  WARNING
