@@ -659,7 +659,7 @@ PRIVATE void on_poll_cb(uv_poll_t *req, int status, int events)
 /***************************************************************************
  *
  ***************************************************************************/
-PRIVATE int clear_queue(hgobj gobj)
+PRIVATE int clear_queue(hgobj gobj, json_t *kw_)
 {
     PRIVATE_DATA *priv = gobj_priv_data(gobj);
 
@@ -741,7 +741,9 @@ PRIVATE int pull_queue(hgobj gobj)
             );
         }
         uv_poll_start(&priv->uv_poll, UV_READABLE|UV_WRITABLE, on_poll_cb);
-        //set_timeout(priv->timer, priv->timeout_response); falla, no sé porqué
+        if (priv->timeout_response > 0) {
+            set_timeout(priv->timer, priv->timeout_response);
+        }
     }
 
     return 0;
@@ -1144,19 +1146,13 @@ PRIVATE int ac_timeout_data(hgobj gobj, const char *event, json_t *kw, hgobj src
  *  NOTE Object with __queries_in_queue__
  *  If it exists "dst" then use gobj_send_event() else use gobj_publish_event()
     {
-        "dst": "unique-gobj" or 99999 (hgobj)
+        "dst": "unique-gobj" or 99999 (hgobj) // WARNING don't use volatiles hgobj
         "query": "..."
     }
  *
  ***************************************************************************/
 PRIVATE int ac_send_query(hgobj gobj, const char *event, json_t *kw, hgobj src)
 {
-    PRIVATE_DATA *priv = gobj_priv_data(gobj);
-
-    if (priv->timeout_response > 0) {
-        set_timeout(priv->timer, priv->timeout_response);
-    }
-
     push_queue(gobj, kw);
     pull_queue(gobj);
 
@@ -1183,7 +1179,7 @@ PRIVATE int ac_enqueue_query(hgobj gobj, const char *event, json_t *kw, hgobj sr
  ***************************************************************************/
 PRIVATE int ac_clear_queue(hgobj gobj, const char *event, json_t *kw, hgobj src)
 {
-    clear_queue(gobj);
+    clear_queue(gobj, kw);
 
     KW_DECREF(kw);
     return 0;
