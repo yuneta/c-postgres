@@ -691,7 +691,7 @@ PRIVATE int push_queue(
     } else {
         if(gobj_trace_level(gobj) & TRACE_MESSAGES) {
             const char *dst = kw_get_str(kw, "dst", "", 0);
-            trace_msg("📘📘Postgres PUSH QUERY ⏬ dst '%s'\n%s\n", dst?dst:"", query);
+            trace_msg("🗂🗂Postgres PUSH QUERY ⏬ dst '%s'\n%s\n", dst?dst:"", query);
         }
         json_array_append(priv->dl_queries, kw);
     }
@@ -728,7 +728,7 @@ PRIVATE int pull_queue(hgobj gobj)
         const char *query = kw_get_str(priv->cur_query, "query", "", KW_REQUIRED);
         if(gobj_trace_level(gobj) & TRACE_MESSAGES) {
             const char *dst = kw_get_str(priv->cur_query, "dst", "", 0);
-            trace_msg("📘📘Postgres PULL QUERY ⏩⏩⏩⏩ dst %s\n%s\n", dst?dst:"", query);
+            trace_msg("🗂🗂Postgres PULL QUERY ⏩ dst %s\n%s\n", dst?dst:"", query);
         }
         if(!PQsendQuery(priv->conn, query)) {
             log_error(0,
@@ -784,7 +784,7 @@ PRIVATE int process_result(hgobj gobj, PGresult* result)
         json_object_set_new(kw_result, "comment", json_string(error));
         if(gobj_trace_level(gobj) & TRACE_MESSAGES) {
             const char *dst = kw_get_str(kw_result, "dst", "", 0);
-            log_debug_json(0, kw_result, "📘📘Postgres RESULT ⏪ 🔴 ERROR, dst '%s'", dst?dst:"");
+            log_debug_json(0, kw_result, "🗂🗂Postgres RESULT ⏪ 🔴 ERROR, dst '%s'", dst?dst:"");
         }
         return publish_result(gobj, kw_result);
     }
@@ -907,7 +907,7 @@ PRIVATE int process_result(hgobj gobj, PGresult* result)
         c++;
         if(c == 2) {
             const char *dst = kw_get_str(kw_result, "dst", "", 0);
-            log_debug_json(0, kw_result, "📘📘Postgres RESULT ⏪ 🔥 LOST, dst '%s'", dst?dst:"");
+            log_debug_json(0, kw_result, "SIMULA PERDIDA 🗂🗂Postgres RESULT ⏪ 🔥 LOST, dst '%s'", dst?dst:"");
             json_decref(kw_result);
             return 0;
         }
@@ -917,9 +917,9 @@ PRIVATE int process_result(hgobj gobj, PGresult* result)
         const char *dst = kw_get_str(kw_result, "dst", "", 0);
         int result = kw_get_int(kw_result, "result", -1, KW_REQUIRED);
         if(result < 0) {
-            log_debug_json(0, kw_result, "📘📘Postgres RESULT ⏪ 🔴 ERROR, dst '%s'", dst?dst:"");
+            log_debug_json(0, kw_result, "🗂🗂Postgres RESULT ⏪ 🔴 ERROR, dst '%s'", dst?dst:"");
         } else {
-            log_debug_json(0, kw_result, "📘📘Postgres RESULT ⏪ 👍 OK, dst '%s'", dst?dst:"");
+            log_debug_json(0, kw_result, "🗂🗂Postgres RESULT ⏪ 🔵 OK, dst '%s'", dst?dst:"");
         }
     }
 
@@ -1134,7 +1134,7 @@ PRIVATE int ac_timeout_data(hgobj gobj, const char *event, json_t *kw, hgobj src
     json_object_set_new(kw_result, "comment", json_string("Postgres timeout"));
     if(gobj_trace_level(gobj) & TRACE_MESSAGES) {
         const char *dst = kw_get_str(priv->cur_query, "dst", "", 0);
-        log_debug_json(0, kw_result, "📘📘Postgres RESULT ⏪ ⏳TIMEOUT, dst '%s'", dst?dst:"");
+        log_debug_json(0, kw_result, "🗂🗂Postgres RESULT ⏪ ⏳TIMEOUT, dst '%s'", dst?dst:"");
     }
     KW_DECREF(kw);
     return publish_result(gobj, kw_result);
