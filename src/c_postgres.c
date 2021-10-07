@@ -730,6 +730,18 @@ PRIVATE int pull_queue(hgobj gobj)
             const char *dst = kw_get_str(priv->cur_query, "dst", "", 0);
             trace_msg("🗂🗂Postgres PULL QUERY ⏩ dst %s\n%s\n", dst?dst:"", query);
         }
+
+
+    // TODO TEST
+    {
+        static int c = 0;
+        c++;
+        if(c == 2) {
+        }
+    }
+
+
+
         if(!PQsendQuery(priv->conn, query)) {
             log_error(0,
                 "gobj",         "%s", gobj_full_name(gobj),
@@ -901,18 +913,6 @@ PRIVATE int process_result(hgobj gobj, PGresult* result)
                 NULL
             );
             break;
-    }
-
-    // TODO TEST
-    {
-        static int c = 0;
-        c++;
-        if(c == 2) {
-            const char *dst = kw_get_str(kw_result, "dst", "", 0);
-            log_debug_json(0, kw_result, "SIMULA PERDIDA 🗂🗂Postgres RESULT ⏪ 🔥 LOST, dst '%s'", dst?dst:"");
-            json_decref(kw_result);
-            return 0;
-        }
     }
 
     if(gobj_trace_level(gobj) & TRACE_MESSAGES) {
