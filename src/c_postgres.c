@@ -388,7 +388,7 @@ PRIVATE void noticeProcessor(void *arg, const char *message)
         log_warning(0,
             "gobj",         "%s", gobj_full_name(gobj),
             "function",     "%s", __FUNCTION__,
-            "msgset",       "%s", MSGSET_DATABASE_ERROR,
+            "msgset",       "%s", MSGSET_DATABASE,
             "msg",          "%s", message,
             NULL
         );
@@ -764,7 +764,7 @@ PRIVATE int pull_queue(hgobj gobj)
             log_warning(0,
                 "gobj",         "%s", gobj_full_name(gobj),
                 "function",     "%s", __FUNCTION__,
-                "msgset",       "%s", MSGSET_DATABASE_ERROR,
+                "msgset",       "%s", MSGSET_DATABASE,
                 "msg",          "%s", "postgres query in progress",
                 "cur_query",    "%j", priv->cur_query,
                 NULL
