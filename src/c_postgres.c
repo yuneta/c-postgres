@@ -662,9 +662,61 @@ PRIVATE void on_poll_cb(uv_poll_t *req, int status, int events)
 PRIVATE int clear_queue(hgobj gobj, json_t *kw_)
 {
     PRIVATE_DATA *priv = gobj_priv_data(gobj);
+    BOOL pull = FALSE;
+    BOOL found = FALSE;
 
-    json_array_clear(priv->dl_queries);
-    JSON_DECREF(priv->cur_query);
+    const char *id = kw_get_str(kw_, "id", "", 0);
+    if(empty_string(id)) {
+        if(gobj_trace_level(gobj) & TRACE_MESSAGES) {
+            if(priv->cur_query) {
+                log_debug_json(0, priv->cur_query, "🗂🗂Postgres CLEAR current query");
+            }
+            log_debug_json(0, priv->dl_queries, "🗂🗂Postgres CLEAR QUEUE");
+        }
+        json_array_clear(priv->dl_queries);
+        JSON_DECREF(priv->cur_query);
+        found = TRUE;
+
+    } else {
+        if(priv->cur_query) {
+            const char *id_ = kw_get_str(priv->cur_query, "id", 0, 0);
+            if(id_ && strcmp(id_, id)==0) {
+                if(gobj_trace_level(gobj) & TRACE_MESSAGES) {
+                    log_debug_json(0, priv->cur_query, "🗂🗂Postgres CLEAR current query");
+                }
+                JSON_DECREF(priv->cur_query);
+                pull = TRUE;
+                found = TRUE;
+            }
+            int idx; json_t *jn_query;
+            json_array_foreach(priv->dl_queries, idx, jn_query) {
+                id_ = kw_get_str(priv->cur_query, "id", 0, 0);
+                if(id_ && strcmp(id_, id)==0) {
+                    if(gobj_trace_level(gobj) & TRACE_MESSAGES) {
+                        log_debug_json(0, priv->cur_query, "🗂🗂Postgres CLEAR query");
+                    }
+                    JSON_DECREF(priv->cur_query);
+                    found = TRUE;
+                    break; // WARNING delete only one item
+                }
+            }
+        }
+    }
+
+    if(!found) {
+        log_error(0,
+            "gobj",         "%s", gobj_full_name(gobj),
+            "function",     "%s", __FUNCTION__,
+            "msgset",       "%s", MSGSET_PARAMETER_ERROR,
+            "msg",          "%s", "query NOT FOUND",
+            "id",           "%s", id,
+            NULL
+        );
+    }
+
+    if(pull) {
+        pull_queue(gobj);
+    }
 
     return 0;
 }
@@ -731,17 +783,6 @@ PRIVATE int pull_queue(hgobj gobj)
             trace_msg("🗂🗂Postgres PULL QUERY ⏩ dst %s\n%s\n", dst?dst:"", query);
         }
 
-
-    // TODO TEST
-    {
-        static int c = 0;
-        c++;
-        if(c == 2) {
-        }
-    }
-
-
-
         if(!PQsendQuery(priv->conn, query)) {
             log_error(0,
                 "gobj",         "%s", gobj_full_name(gobj),
@@ -752,6 +793,7 @@ PRIVATE int pull_queue(hgobj gobj)
                 NULL
             );
         }
+
         uv_poll_start(&priv->uv_poll, UV_READABLE|UV_WRITABLE, on_poll_cb);
         if (priv->timeout_response > 0) {
             set_timeout(priv->timer, priv->timeout_response);
