@@ -1402,7 +1402,7 @@ PRIVATE GCLASS _gclass = {
         0, //mt_add_child_resource_link
         0, //mt_delete_child_resource_link
         0, //mt_get_resource
-        0, //mt_authorization_parser,
+        0, //mt_state_changed,
         0, //mt_authenticate,
         0, //mt_list_childs,
         0, //mt_stats_updated,
