@@ -1399,8 +1399,8 @@ PRIVATE GCLASS _gclass = {
         0, //mt_list_resource,
         0, //mt_update_resource,
         0, //mt_delete_resource,
-        0, //mt_add_child_resource_link
-        0, //mt_delete_child_resource_link
+        0, //mt_future21
+        0, //mt_future22
         0, //mt_get_resource
         0, //mt_state_changed,
         0, //mt_authenticate,
