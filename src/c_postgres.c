@@ -1397,7 +1397,7 @@ PRIVATE GCLASS _gclass = {
         0, //mt_inject_event,
         0, //mt_create_resource,
         0, //mt_list_resource,
-        0, //mt_update_resource,
+        0, //mt_save_resource,
         0, //mt_delete_resource,
         0, //mt_future21
         0, //mt_future22
