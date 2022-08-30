@@ -1042,7 +1042,8 @@ PRIVATE int publish_result(hgobj gobj, json_t* kw)
             return -1;
         }
     } else {
-        return gobj_publish_event(gobj, "EV_ON_MESSAGE", kw);
+        gobj_publish_event(gobj, "EV_ON_MESSAGE", kw);
+        return 0;
     }
 }
 
