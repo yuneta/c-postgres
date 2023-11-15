@@ -1,7 +1,7 @@
 ##############################################
 #   CMake
 ##############################################
-cmake_minimum_required(VERSION 3.0)
+cmake_minimum_required(VERSION 3.5)
 project(yuneta-postgres C)
 include(CheckIncludeFiles)
 include(CheckSymbolExists)
